@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>gmxgrace Studio — Publication-Quality GROMACS Figure Workbench</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <rect x="2" y="2" width="20" height="20" rx="5" fill="#1D4ED8"/>
+            <path d="M5.5 16.5L9.5 11.5L13 14L18.5 7.5" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="9.5" cy="11.5" r="1.5" fill="#93C5FD"/>
+            <circle cx="18.5" cy="7.5" r="1.5" fill="#93C5FD"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">gmxgrace</span>
+          <span class="brand-tag">Publication Studio</span>
+        </div>
+      </div>
+
+      <div class="demo-bar">
+        <span class="demo-label">GROMACS Demos:</span>
+        <div id="demo-buttons" class="demo-pills"></div>
+      </div>
+
+      <div class="export-bar">
+        <button class="btn btn-primary" data-export="pdf" title="Editable vector PDF (TrueType Type 42)">
+          PDF
+        </button>
+        <button class="btn btn-outline" data-export="svg" title="Editable SVG for Illustrator / Inkscape">
+          SVG
+        </button>
+        <button class="btn btn-outline" data-export="eps" title="Encapsulated PostScript">
+          EPS
+        </button>
+        <button class="btn btn-outline" data-export="png" title="High-DPI PNG">
+          PNG
+        </button>
+        <button class="btn btn-outline" data-export="tiff" title="LZW-compressed Journal TIFF">
+          TIFF
+        </button>
+        <button class="btn btn-ghost" id="btn-export-recipe" title="Download reproducible JSON recipe for CLI">
+          Save Recipe
+        </button>
+        <button class="btn btn-ghost" id="btn-import-recipe" title="Load a saved figure_recipe.json">
+          Load
+        </button>
+        <input type="file" id="recipe-input" accept=".json" hidden />
+      </div>
+    </header>
+
+    <!-- Main 3-Pane Studio -->
+    <main class="workspace">
+      <!-- Left Sidebar: Files & Multi-Panel Layout -->
+      <aside class="sidebar-left">
+        <section class="panel-card">
+          <div class="section-header">
+            <h2>GROMACS Files</h2>
+            <label class="inline-check" title="Treat multi-column .xvg like xmgrace -nxy">
+              <input type="checkbox" id="upload-nxy" />
+              <span>-nxy</span>
+            </label>
+          </div>
+          <div id="dropzone" class="dropzone" tabindex="0">
+            <input type="file" id="file-input" multiple accept=".xvg,.xpm,.edr,.csv,.tsv,.dat,.txt" hidden />
+            <div class="dropzone-icon">↑</div>
+            <div class="dropzone-title">Drop files or click to browse</div>
+            <div class="dropzone-sub">.xvg · .xpm · .edr · .csv · .dat</div>
+          </div>
+          <div id="upload-status" class="status-note hidden"></div>
+          <div id="dataset-list" class="dataset-list"></div>
+        </section>
+
+        <section class="panel-card">
+          <div class="section-header">
+            <h2>Figure Layout</h2>
+            <select id="panel-labels-select" class="compact-select" title="Multi-panel label style">
+              <option value="lowercase">a, b, c</option>
+              <option value="uppercase">A, B, C</option>
+              <option value="parens_lower">(a), (b)</option>
+              <option value="parens_upper">(A), (B)</option>
+              <option value="none">No labels</option>
+            </select>
+          </div>
+          <div class="layout-grid-btns">
+            <button class="layout-btn" data-grid="1x1">1×1</button>
+            <button class="layout-btn" data-grid="1x2">1×2</button>
+            <button class="layout-btn" data-grid="2x1">2×1</button>
+            <button class="layout-btn" data-grid="2x2">2×2</button>
+            <button class="layout-btn" data-grid="1x3">1×3</button>
+            <button class="layout-btn" data-grid="2x3">2×3</button>
+          </div>
+          <div class="panel-tabs-label">Active Panel (click to edit)</div>
+          <div id="panel-selector" class="panel-selector"></div>
+          <div class="active-panel-files">
+            <div class="sub-label">Datasets in Active Panel</div>
+            <div id="panel-dataset-chips" class="chip-list"></div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Center Canvas + Bottom Reproducibility & Stats Drawer -->
+      <section class="center-stage">
+        <div class="canvas-toolbar">
+          <div class="canvas-meta">
+            <span id="canvas-dims" class="meta-badge">Nature · 183 × 132 mm</span>
+            <span id="render-indicator" class="render-badge">Ready</span>
+          </div>
+          <div class="canvas-tools">
+            <button class="tool-btn active" data-zoom="fit">Fit</button>
+            <button class="tool-btn" data-zoom="1">100%</button>
+            <button class="tool-btn" data-zoom="1.4">140%</button>
+            <button class="tool-btn" id="btn-refresh" title="Force re-render">↻ Refresh</button>
+          </div>
+        </div>
+
+        <div class="canvas-viewport" id="canvas-viewport">
+          <div class="paper-sheet" id="paper-sheet">
+            <div id="svg-preview" class="svg-preview">
+              <div class="empty-canvas">Loading publication preview…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Drawer: CLI / Python Reproducibility + Statistics -->
+        <div class="bottom-drawer" id="bottom-drawer">
+          <div class="drawer-tabs">
+            <button class="drawer-tab active" data-drawer="reproduce">Reproduce (CLI &amp; Python)</button>
+            <button class="drawer-tab" data-drawer="stats">Summary Statistics</button>
+            <div class="drawer-spacer"></div>
+            <button class="drawer-toggle" id="btn-toggle-drawer" title="Expand / collapse drawer">▾</button>
+          </div>
+
+          <div class="drawer-body" id="drawer-reproduce">
+            <div class="code-columns">
+              <div class="code-box">
+                <div class="code-box-head">
+                  <span>Python CLI Command</span>
+                  <button class="copy-btn" data-copy="cli-code">Copy CLI</button>
+                </div>
+                <pre id="cli-code" class="code-pre"></pre>
+              </div>
+              <div class="code-box">
+                <div class="code-box-head">
+                  <span>Standalone Python Script</span>
+                  <button class="copy-btn" data-copy="python-code">Copy Python</button>
+                </div>
+                <pre id="python-code" class="code-pre"></pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="drawer-body hidden" id="drawer-stats">
+            <div class="stats-toolbar">
+              <span>Equilibration skip: <strong id="stats-eq-label">0%</strong></span>
+              <span class="stats-hint">(Controlled by active panel's equilibration slider in Analysis tab)</span>
+              <button class="btn btn-outline btn-sm" id="btn-export-stats-csv" style="margin-left:auto">Export CSV</button>
+            </div>
+            <div class="stats-table-wrap">
+              <table class="stats-table">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Series</th>
+                    <th>N</th>
+                    <th>Min</th>
+                    <th>Max</th>
+                    <th>Mean ± SD</th>
+                    <th>Median</th>
+                    <th>Eq Mean ± SD</th>
+                  </tr>
+                </thead>
+                <tbody id="stats-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Sidebar: Publication Inspector -->
+      <aside class="sidebar-right">
+        <div class="inspector-tabs">
+          <button class="insp-tab active" data-tab="style">Journal</button>
+          <button class="insp-tab" data-tab="panel">Axes</button>
+          <button class="insp-tab" data-tab="analysis">Analysis</button>
+          <button class="insp-tab" data-tab="series">Series</button>
+        </div>
+
+        <div class="inspector-scroll">
+          <!-- TAB 1: JOURNAL & GLOBAL FIGURE STYLE -->
+          <div class="insp-pane" id="tab-style">
+            <div class="control-group">
+              <label>Journal Preset</label>
+              <div id="journal-cards" class="journal-grid"></div>
+            </div>
+
+            <div class="control-row">
+              <div class="control-group">
+                <label for="ctrl-width">Column Width</label>
+                <select id="ctrl-width">
+                  <option value="single">Single Column</option>
+                  <option value="one_half">1.5 Column</option>
+                  <option value="double">Double Column</option>
+                  <option value="custom">Custom (mm)</option>
+                </select>
+              </div>
+              <div class="control-group">
+                <label for="ctrl-dpi">Export DPI</label>
+                <select id="ctrl-dpi">
+                  <option value="300">300 DPI</option>
+                  <option value="600">600 DPI</option>
+                  <option value="1200">1200 DPI</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="control-row hidden" id="custom-dims-row">
+              <div class="control-group">
+                <label for="ctrl-width-mm">Width (mm)</label>
+                <input type="number" id="ctrl-width-mm" min="40" max="400" step="1" placeholder="120" />
+              </div>
+              <div class="control-group">
+                <label for="ctrl-height-mm">Height (mm)</label>
+                <input type="number" id="ctrl-height-mm" min="30" max="400" step="1" placeholder="auto" />
+              </div>
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-aspect">Panel Aspect Ratio <span class="val-pill" id="val-aspect">0.72</span></label>
+              <input type="range" id="ctrl-aspect" min="0.35" max="1.35" step="0.02" value="0.72" />
+            </div>
+
+            <div class="control-group">
+              <label>Colorblind-Safe Palette</label>
+              <div id="palette-list" class="palette-list"></div>
+            </div>
+
+            <div class="control-row">
+              <div class="control-group">
+                <label for="ctrl-font-family">Font Family</label>
+                <select id="ctrl-font-family">
+                  <option value="">Preset Default</option>
+                  <option value="sans-serif">Sans-Serif</option>
+                  <option value="serif">Serif</option>
+                  <option value="monospace">Monospace</option>
+                </select>
+              </div>
+              <div class="control-group">
+                <label for="ctrl-font-size">Font Size (pt)</label>
+                <input type="number" id="ctrl-font-size" min="5" max="18" step="0.5" placeholder="auto" />
+              </div>
+            </div>
+
+            <div class="control-row">
+              <div class="control-group">
+                <label for="ctrl-line-width">Line Width (pt)</label>
+                <input type="number" id="ctrl-line-width" min="0.3" max="4.0" step="0.1" placeholder="auto" />
+              </div>
+              <div class="control-group checkbox-col">
+                <label class="toggle-row">
+                  <input type="checkbox" id="ctrl-transparent" />
+                  <span>Transparent BG</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-suptitle">Figure Super-Title</label>
+              <input type="text" id="ctrl-suptitle" placeholder="Optional overall title" />
+            </div>
+          </div>
+
+          <!-- TAB 2: PANEL AXES, UNITS & LEGEND -->
+          <div class="insp-pane hidden" id="tab-panel">
+            <div class="control-group">
+              <label for="p-title">Panel Title</label>
+              <input type="text" id="p-title" placeholder="Auto or custom panel title" />
+            </div>
+
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-plot-type">Plot Mode</label>
+                <select id="p-plot-type">
+                  <option value="auto">Auto</option>
+                  <option value="line">Line (XY)</option>
+                  <option value="scatter">Scatter</option>
+                  <option value="density2d">2D Density / Rama</option>
+                  <option value="bar">Bar</option>
+                  <option value="hist">Distribution Hist</option>
+                  <option value="matrix">2D Matrix (.xpm)</option>
+                  <option value="contour">Filled Contour</option>
+                </select>
+              </div>
+              <div class="control-group">
+                <label for="p-legend-loc">Legend Position</label>
+                <select id="p-legend-loc">
+                  <option value="best">Best (Auto)</option>
+                  <option value="upper right">Upper Right</option>
+                  <option value="upper left">Upper Left</option>
+                  <option value="lower right">Lower Right</option>
+                  <option value="lower left">Lower Left</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="group-title">GROMACS Unit Conversion</div>
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-x-unit">X Unit</label>
+                <select id="p-x-unit">
+                  <option value="original">Original</option>
+                  <option value="ps">ps</option>
+                  <option value="ns">ns</option>
+                  <option value="us">µs</option>
+                  <option value="nm">nm</option>
+                  <option value="A">Å</option>
+                </select>
+              </div>
+              <div class="control-group">
+                <label for="p-y-unit">Y Unit</label>
+                <select id="p-y-unit">
+                  <option value="original">Original</option>
+                  <option value="nm">nm</option>
+                  <option value="A">Å</option>
+                  <option value="nm2">nm²</option>
+                  <option value="A2">Å²</option>
+                  <option value="kJ/mol">kJ/mol</option>
+                  <option value="kcal/mol">kcal/mol</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="control-group">
+              <label for="p-xlabel">X-Axis Label (blank = auto from .xvg/.xpm)</label>
+              <input type="text" id="p-xlabel" placeholder="Auto from GROMACS metadata" />
+            </div>
+            <div class="control-group">
+              <label for="p-ylabel">Y-Axis Label</label>
+              <input type="text" id="p-ylabel" placeholder="Auto from GROMACS metadata" />
+            </div>
+
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-xmin">X Min</label>
+                <input type="number" id="p-xmin" step="any" placeholder="auto" />
+              </div>
+              <div class="control-group">
+                <label for="p-xmax">X Max</label>
+                <input type="number" id="p-xmax" step="any" placeholder="auto" />
+              </div>
+            </div>
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-ymin">Y Min</label>
+                <input type="number" id="p-ymin" step="any" placeholder="auto" />
+              </div>
+              <div class="control-group">
+                <label for="p-ymax">Y Max</label>
+                <input type="number" id="p-ymax" step="any" placeholder="auto" />
+              </div>
+            </div>
+
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-xscale">X Scale</label>
+                <select id="p-xscale">
+                  <option value="linear">Linear</option>
+                  <option value="log">Log</option>
+                </select>
+              </div>
+              <div class="control-group">
+                <label for="p-yscale">Y Scale</label>
+                <select id="p-yscale">
+                  <option value="linear">Linear</option>
+                  <option value="log">Log</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="toggle-grid">
+              <label class="toggle-row"><input type="checkbox" id="p-show-legend" checked /><span>Show Legend</span></label>
+              <label class="toggle-row"><input type="checkbox" id="p-legend-frame" /><span>Legend Box</span></label>
+              <label class="toggle-row"><input type="checkbox" id="p-grid" /><span>Grid Lines</span></label>
+              <label class="toggle-row"><input type="checkbox" id="p-minor-ticks" checked /><span>Minor Ticks</span></label>
+            </div>
+          </div>
+
+          <!-- TAB 3: MD ANALYSIS, MATRIX & ANNOTATIONS -->
+          <div class="insp-pane hidden" id="tab-analysis">
+            <div class="group-title">Replicate Aggregation</div>
+            <div class="control-group">
+              <label for="p-aggregate">Combine Replicates</label>
+              <select id="p-aggregate">
+                <option value="none">None (Plot Separately)</option>
+                <option value="mean_sd">Mean ± SD Shaded Band</option>
+                <option value="mean_sem">Mean ± SEM Shaded Band</option>
+                <option value="median_iqr">Median + IQR (25–75%)</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="p-agg-label">Aggregate Legend Label</label>
+              <input type="text" id="p-agg-label" placeholder="Mean ± SD" />
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" id="p-agg-indiv" />
+              <span>Show faint individual replicates underneath</span>
+            </label>
+
+            <div class="divider"></div>
+            <div class="group-title">Running Average / Smoothing</div>
+            <div class="control-group">
+              <label for="p-smooth">Filter Method</label>
+              <select id="p-smooth">
+                <option value="none">None</option>
+                <option value="moving_avg">Moving Average</option>
+                <option value="savgol">Savitzky-Golay</option>
+                <option value="gaussian">Gaussian</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="p-window">Window Size <span class="val-pill" id="val-window">25</span></label>
+              <input type="range" id="p-window" min="3" max="151" step="2" value="25" />
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" id="p-show-raw" checked />
+              <span>Overlay raw trajectory beneath smoothed curve</span>
+            </label>
+
+            <div class="divider"></div>
+            <div class="group-title">Marginal Distribution &amp; Equilibration</div>
+            <div class="toggle-grid">
+              <label class="toggle-row"><input type="checkbox" id="p-marginal" /><span>Marginal Hist/KDE</span></label>
+              <label class="toggle-row"><input type="checkbox" id="p-mean-line" /><span>Dashed Mean Line</span></label>
+            </div>
+            <div class="control-group">
+              <label for="p-eq">Equilibration Skip <span class="val-pill" id="val-eq">0%</span></label>
+              <input type="range" id="p-eq" min="0" max="0.8" step="0.05" value="0" />
+            </div>
+
+            <div class="divider"></div>
+            <div class="group-title">2D Matrix / FEL (.xpm) Settings</div>
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-cmap">Colormap</label>
+                <select id="p-cmap"></select>
+              </div>
+              <div class="control-group">
+                <label for="p-contours">Contours</label>
+                <input type="number" id="p-contours" min="2" max="40" value="10" />
+              </div>
+            </div>
+            <div class="control-group">
+              <label for="p-cbar-label">Colorbar Label</label>
+              <input type="text" id="p-cbar-label" placeholder="e.g. ΔG (kJ mol⁻¹)" />
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" id="p-show-contours" checked />
+              <span>Overlay contour isolines</span>
+            </label>
+
+            <div class="divider"></div>
+            <div class="group-title">Annotations (Reference Lines / Shaded Regions)</div>
+            <div class="ann-builder">
+              <select id="ann-kind">
+                <option value="vline">Vertical Line (X)</option>
+                <option value="hline">Horizontal Line (Y)</option>
+                <option value="vspan">Shaded X Region</option>
+                <option value="hspan">Shaded Y Region</option>
+              </select>
+              <input type="number" id="ann-val" step="any" placeholder="Pos" />
+              <input type="number" id="ann-val-end" step="any" placeholder="End (span)" />
+              <input type="text" id="ann-text" placeholder="Label" />
+              <button class="btn btn-outline btn-sm" id="btn-add-ann">+ Add</button>
+            </div>
+            <div id="ann-list" class="ann-list"></div>
+          </div>
+
+          <!-- TAB 4: PER-SERIES APPEARANCE (XMGRACE SET APPEARANCE) -->
+          <div class="insp-pane hidden" id="tab-series">
+            <div class="group-title">Series Appearance (Active Panel)</div>
+            <p class="help-text">Customize legends, colors, line styles, and markers per series — just like xmgrace Set Appearance.</p>
+            <div id="series-editor-list" class="series-editor-list"></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

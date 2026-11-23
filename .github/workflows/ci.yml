@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,edr]"
+
+      - name: Run pytest suite
+        run: pytest -v
+
+      - name: Verify CLI commands
+        run: |
+          gmxgrace --version
+          gmxgrace presets
+          gmxgrace demo --out-dir /tmp/gmx_demo
+          gmxgrace plot /tmp/gmx_demo/rmsd_rep1.xvg --x-unit ns --y-unit A --journal nature -o /tmp/rmsd.pdf
+          gmxgrace matrix /tmp/gmx_demo/gibbs_fel.xpm --contours 8 -o /tmp/fel.svg

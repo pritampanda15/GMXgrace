@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+title: "GMXgrace: Publication-Quality GROMACS Plotting CLI, API, and Online Studio"
+message: "If you use GMXgrace to prepare figures or analyze GROMACS trajectories in your academic work, please cite this repository."
+type: software
+authors:
+  - family-names: Panda
+    given-names: Pritam Kumar
+    email: pritampkp15@gmail.com
+repository-code: "https://github.com/pritampanda15/GMXgrace"
+url: "https://github.com/pritampanda15/GMXgrace"
+keywords:
+  - gromacs
+  - xmgrace
+  - molecular-dynamics
+  - scientific-visualization
+  - publication-figures
+  - bioinformatics
+  - computational-biophysics
+license: "NOASSERTION"
+version: "0.1.0"
+date-released: "2026-11-23"
