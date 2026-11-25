@@ -53,7 +53,10 @@ def _rpc_upload(file_items, nxy):
     pairs = []
     for item in file_items:
         name = str(item["name"])
-        raw = bytes(item["bytes"].to_py())
+        buf = item["bytes"]
+        if hasattr(buf, "to_py"):
+            buf = buf.to_py()
+        raw = bytes(buf)
         pairs.append((name, raw))
     return json.dumps(_session.upload_files(pairs, nxy=bool(nxy)))
 
@@ -134,7 +137,7 @@ self.onmessage = async (event) => {
         const jsonStr = pyodide.globals.get("_rpc_upload")(pyItems, payload.nxy);
         self.postMessage({ id, ok: true, data: JSON.parse(jsonStr) });
       } finally {
-        pyItems.destroy();
+        if (pyItems && typeof pyItems.destroy === "function") pyItems.destroy();
       }
       return;
     }
@@ -146,12 +149,12 @@ self.onmessage = async (event) => {
         payload.dpi || null
       );
       try {
-        const u8 = pyBytes.toJs({ create_proxies: false });
+        const u8 = typeof pyBytes.toJs === "function" ? pyBytes.toJs({ create_proxies: false }) : pyBytes;
         // Transfer underlying ArrayBuffer with zero copy for crisp speed
         const copy = new Uint8Array(u8);
         self.postMessage({ id, ok: true, data: copy.buffer }, [copy.buffer]);
       } finally {
-        pyBytes.destroy();
+        if (pyBytes && typeof pyBytes.destroy === "function") pyBytes.destroy();
       }
       return;
     }
