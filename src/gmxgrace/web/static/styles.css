@@ -88,7 +88,7 @@ html, body {
   gap: 8px;
   min-width: 0;
   flex: 1;
-  justify-content: center;
+  justify-content: flex-start;
   overflow-x: auto;
   scrollbar-width: none;
 }
