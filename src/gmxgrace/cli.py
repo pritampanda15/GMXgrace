@@ -21,7 +21,7 @@ from gmxgrace.styles import JOURNAL_PRESETS, PALETTES
 
 console = Console()
 
-_SUBCOMMANDS = {"plot", "matrix", "fel", "batch", "inspect", "render", "serve", "presets", "demo"}
+_SUBCOMMANDS = {"plot", "matrix", "fel", "batch", "inspect", "render", "serve", "presets", "demo", "license"}
 
 
 def _parse_range(raw: str | None) -> tuple[float | None, float | None]:
@@ -513,6 +513,21 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_license(_: argparse.Namespace) -> int:
+    console.print(
+        "[bold yellow]GMXgrace Academic & Non-Commercial Research License (v1.0)[/bold yellow]\n"
+        "Copyright (c) 2026 Pritam Kumar Panda\n\n"
+        "[green]PERMITTED:[/green] Free use, modification, redistribution, and publication strictly for "
+        "non-commercial academic, educational, and basic scientific research (universities, students, "
+        "non-profit research institutes, public government labs).\n\n"
+        "[red]PROHIBITED:[/red] Any commercial use, commercial R&D, drug discovery by for-profit entities, "
+        "paid redistribution, or commercial SaaS hosting without a separate written commercial license.\n\n"
+        "Commercial licensing inquiries: [cyan]pritampkp15@gmail.com[/cyan]\n"
+        "Full license: https://github.com/pritampanda15/GMXgrace/blob/main/LICENSE"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gmxgrace",
@@ -668,6 +683,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_batch.add_argument("--eq", type=float, default=0.0, help="Equilibration fraction to skip (0-0.9)")
     p_batch.add_argument("--dpi", type=int, default=300)
     p_batch.set_defaults(func=_cmd_batch)
+
+    # license subcommand
+    p_lic = sub.add_parser("license", help="Display the Academic & Non-Commercial Research License")
+    p_lic.set_defaults(func=_cmd_license)
 
     return parser
 

@@ -1138,6 +1138,18 @@
       handleFiles(e.dataTransfer.files);
     });
 
+    // Academic License Modal
+    const licModal = $("license-modal");
+    if ($("btn-license") && licModal) {
+      const closeModal = () => licModal.classList.add("hidden");
+      $("btn-license").addEventListener("click", () => licModal.classList.remove("hidden"));
+      $("btn-close-license")?.addEventListener("click", closeModal);
+      $("btn-accept-license")?.addEventListener("click", closeModal);
+      licModal.addEventListener("click", (e) => {
+        if (e.target === licModal) closeModal();
+      });
+    }
+
     // Export buttons
     document.querySelectorAll("[data-export]").forEach((btn) => {
       btn.addEventListener("click", () => exportFigure(btn.dataset.export));
