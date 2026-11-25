@@ -255,5 +255,6 @@ class FigureSpec(BaseModel):
     suptitle: str = ""
     dpi: int = Field(default=300, ge=72, le=1200)
     transparent: bool = False
+    max_plot_points: int = Field(default=12000, ge=0, le=500000)
 
     panels: list[PanelSpec] = Field(default_factory=lambda: [PanelSpec()])

@@ -247,3 +247,39 @@ def test_fastapi_web_studio_endpoints() -> None:
     )
     assert up.status_code == 200
     assert up.json()["datasets"][0]["detected_type"] == "rmsd"
+
+
+def test_heavy_file_vectorized_parse_and_minmax_downsampling() -> None:
+    """Verify fast C-speed parsing and peak-preserving Min-Max downsampling on 200k frames."""
+    from gmxgrace.analysis import minmax_downsample
+
+    n = 200_000
+    x = np.linspace(0.0, 1000000.0, n)
+    y = 0.22 + 0.03 * np.sin(x / 5000.0)
+    # Inject a sharp transient spike to ensure Min-Max envelope preserves exact peaks
+    y[77777] = 0.95
+    y[123456] = 0.01
+
+    lines = ['@ title "Heavy RMSD"', '@ xaxis label "Time (ps)"', '@ yaxis label "RMSD (nm)"']
+    # Build fast numeric payload
+    body = "\n".join(f"{xv:.2f} {yv:.5f}" for xv, yv in zip(x, y))
+    ds = parse_xvg_text("\n".join(lines) + "\n" + body, filename="heavy_1us.xvg")
+    assert len(ds.series) == 1
+    assert len(ds.series[0].x) == n
+
+    # Peak-preserving downsampling must retain exact global spike min/max while reducing vertices
+    xd, yd = minmax_downsample(ds.series[0].x, ds.series[0].y, max_points=8000)
+    assert len(xd) <= 8002
+    assert float(np.max(yd)) == pytest.approx(0.95, abs=1e-4)
+    assert float(np.min(yd)) == pytest.approx(0.01, abs=1e-4)
+
+    # Full render of 200k-frame dataset should produce a compact SVG quickly
+    spec = FigureSpec(
+        journal="nature",
+        max_plot_points=8000,
+        panels=[PanelSpec(id="p1", dataset_ids=["heavy"], x_unit="ns", y_unit="A", marginal_hist=True)],
+    )
+    svg = render_figure_bytes(spec, {"heavy": ds}, fmt="svg")
+    assert b"<svg" in svg
+    assert len(svg) < 1_500_000  # lightweight publication SVG even for 200k raw frames
+

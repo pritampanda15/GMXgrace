@@ -172,3 +172,76 @@ def aggregate_replicates(
         n_replicates=n_rep,
         method=method,
     )
+
+
+def minmax_downsample(
+    x: np.ndarray,
+    y: np.ndarray,
+    max_points: int = 12000,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Peak-preserving vectorized Min-Max envelope downsampling for heavy MD trajectories.
+
+    Preserves the exact visual minimum and maximum in every bin (in chronological order),
+    keeping SVGs/PDFs lightweight and crisp even for 1M+ frame trajectories while never
+    altering statistical calculations (which always run on full-resolution data).
+    """
+    n = len(x)
+    if max_points <= 0 or n <= max_points or n < 10:
+        return x, y
+
+    nbins = max(2, (max_points - 2) // 2)
+    interior = n - 2
+    bin_size = interior // nbins
+    if bin_size < 2:
+        return x, y
+
+    usable = nbins * bin_size
+    y_slice = y[1 : 1 + usable].reshape(nbins, bin_size)
+    # Replace NaNs safely for argmin/argmax
+    has_nan = np.isnan(y_slice).any()
+    if has_nan:
+        y_min_safe = np.where(np.isnan(y_slice), np.inf, y_slice)
+        y_max_safe = np.where(np.isnan(y_slice), -np.inf, y_slice)
+        idx_min = np.argmin(y_min_safe, axis=1)
+        idx_max = np.argmax(y_max_safe, axis=1)
+    else:
+        idx_min = np.argmin(y_slice, axis=1)
+        idx_max = np.argmax(y_slice, axis=1)
+
+    offsets = 1 + np.arange(nbins) * bin_size
+    g_min = offsets + idx_min
+    g_max = offsets + idx_max
+
+    first = np.minimum(g_min, g_max)
+    second = np.maximum(g_min, g_max)
+    interleaved = np.empty(nbins * 2, dtype=np.intp)
+    interleaved[0::2] = first
+    interleaved[1::2] = second
+
+    indices = np.concatenate(([0], interleaved, [n - 1]))
+    return x[indices], y[indices]
+
+
+def minmax_downsample_band(
+    x: np.ndarray,
+    center: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    max_points: int = 8000,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Downsample a curve with lower/upper confidence envelope preserving outer band bounds."""
+    n = len(x)
+    if max_points <= 0 or n <= max_points or n < 10:
+        return x, center, lower, upper
+
+    nbins = max(4, max_points)
+    bin_size = n // nbins
+    if bin_size < 2:
+        return x, center, lower, upper
+
+    usable = nbins * bin_size
+    x_b = x[:usable].reshape(nbins, bin_size).mean(axis=1)
+    c_b = np.nanmean(center[:usable].reshape(nbins, bin_size), axis=1)
+    lo_b = np.nanmin(lower[:usable].reshape(nbins, bin_size), axis=1)
+    hi_b = np.nanmax(upper[:usable].reshape(nbins, bin_size), axis=1)
+    return x_b, c_b, lo_b, hi_b

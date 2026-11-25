@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>gmxgrace Studio — Publication-Quality GROMACS Figure Workbench</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -21,7 +21,7 @@
         </div>
         <div class="brand-text">
           <span class="brand-name">gmxgrace</span>
-          <span class="brand-tag">Publication Studio</span>
+          <span class="brand-tag" id="engine-badge" title="Active Python rendering engine">Studio</span>
         </div>
       </div>
 
@@ -124,7 +124,11 @@
         <div class="canvas-viewport" id="canvas-viewport">
           <div class="paper-sheet" id="paper-sheet">
             <div id="svg-preview" class="svg-preview">
-              <div class="empty-canvas">Loading publication preview…</div>
+              <div class="empty-canvas" id="canvas-placeholder">
+                <div class="loader-title">Initializing GMXgrace Publication Engine…</div>
+                <div class="loader-sub" id="loader-stage">Detecting runtime…</div>
+                <div class="loader-bar-track"><div class="loader-bar-fill" id="loader-fill" style="width: 12%"></div></div>
+              </div>
             </div>
           </div>
         </div>
@@ -274,6 +278,15 @@
             <div class="control-group">
               <label for="ctrl-suptitle">Figure Super-Title</label>
               <input type="text" id="ctrl-suptitle" placeholder="Optional overall title" />
+            </div>
+
+            <div class="control-group">
+              <label for="ctrl-max-pts" title="Peak-preserving Min-Max envelope decimation for very large MD trajectories (stats & smoothing always use 100% of raw frames)">Heavy-File Plot Decimation</label>
+              <select id="ctrl-max-pts">
+                <option value="12000">Auto (12k pts · Peak-Preserving)</option>
+                <option value="30000">High Detail (30k pts)</option>
+                <option value="0">Off (Plot 100% Raw Vertices)</option>
+              </select>
             </div>
           </div>
 
@@ -495,6 +508,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>

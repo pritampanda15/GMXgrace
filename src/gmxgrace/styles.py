@@ -263,6 +263,8 @@ def build_rc_params(
         "pdf.fonttype": 42,
         "ps.fonttype": 42,
         "svg.fonttype": "none",
+        "path.simplify": True,
+        "path.simplify_threshold": 0.2,
         "mathtext.default": "regular",
         "figure.facecolor": "white",
         "axes.facecolor": "white",

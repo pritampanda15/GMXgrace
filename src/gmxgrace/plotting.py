@@ -21,7 +21,14 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from PIL import Image
 from scipy.stats import gaussian_kde
 
-from gmxgrace.analysis import aggregate_replicates, smooth_series, unit_scale, update_label_unit
+from gmxgrace.analysis import (
+    aggregate_replicates,
+    minmax_downsample,
+    minmax_downsample_band,
+    smooth_series,
+    unit_scale,
+    update_label_unit,
+)
 from gmxgrace.models import (
     AnnotationSpec,
     FigureSpec,
@@ -296,6 +303,7 @@ def _render_density2d(
     panel: PanelSpec,
     transformed_series: list[tuple[SeriesData, SeriesStyleSpec | None, str]],
     first_ds: ParsedDataset,
+    max_plot_points: int = 12000,
 ) -> None:
     """Render a publication 2D KDE contour + scatter plot (Ramachandran phi/psi or PCA 2D)."""
     all_x = np.concatenate([t[0].x for t in transformed_series])
@@ -312,8 +320,12 @@ def _render_density2d(
     gx = np.linspace(x_lo, x_hi, 120)
     gy = np.linspace(y_lo, y_hi, 120)
     xx, yy = np.meshgrid(gx, gy)
+
+    # Stride very large trajectories for fast 2D KDE & scatter rendering
+    kde_step = max(1, len(xv) // 25000)
+    xk, yk = xv[::kde_step], yv[::kde_step]
     try:
-        kde = gaussian_kde(np.vstack([xv, yv]))
+        kde = gaussian_kde(np.vstack([xk, yk]))
         zz = kde(np.vstack([xx.ravel(), yy.ravel()])).reshape(xx.shape)
         cf = ax.contourf(xx, yy, zz, levels=panel.contour_levels, cmap=panel.cmap)
         if panel.show_contours:
@@ -324,7 +336,8 @@ def _render_density2d(
         cbar.set_label(panel.colorbar_label or "Density")
     except Exception:
         pass
-    ax.scatter(xv, yv, s=3.5, color="#111827", alpha=0.18, edgecolors="none", zorder=4)
+    sc_step = max(1, len(xv) // max(2000, max_plot_points)) if max_plot_points > 0 else 1
+    ax.scatter(xv[::sc_step], yv[::sc_step], s=3.5, color="#111827", alpha=0.18, edgecolors="none", zorder=4)
     if is_rama:
         ax.set_xlim(-180, 180)
         ax.set_ylim(-180, 180)
@@ -342,6 +355,7 @@ def _render_xy_panel(
     xy_items: list[tuple[SeriesData, SeriesStyleSpec | None, ParsedDataset]],
     palette: list[str],
     default_lw: float,
+    max_plot_points: int = 12000,
 ) -> None:
     if not xy_items:
         ax.text(
@@ -393,9 +407,10 @@ def _render_xy_panel(
     if panel.aggregate != "none" and len(transformed_series) >= 2:
         if panel.aggregate_show_individual:
             for s_t, st, col in transformed_series:
+                xp, yp = minmax_downsample(s_t.x, s_t.y, max_plot_points)
                 ax.plot(
-                    s_t.x,
-                    s_t.y,
+                    xp,
+                    yp,
                     color=col,
                     linewidth=max(0.5, default_lw * 0.55),
                     alpha=0.28,
@@ -418,8 +433,10 @@ def _render_xy_panel(
                 "median_iqr": f"Median + IQR (n={agg.n_replicates})",
             }.get(panel.aggregate, "Aggregate")
 
-            ax.fill_between(agg.x, lower, upper, color=agg_col, alpha=0.22, linewidth=0, zorder=3)
-            ax.plot(agg.x, center, color=agg_col, linewidth=default_lw * 1.15, label=agg_lbl, zorder=4)
+            xb, cb, lob, hib = minmax_downsample_band(agg.x, center, lower, upper, max_plot_points)
+            ax.fill_between(xb, lob, hib, color=agg_col, alpha=0.22, linewidth=0, zorder=3)
+            xc, yc = minmax_downsample(agg.x, center, max_plot_points)
+            ax.plot(xc, yc, color=agg_col, linewidth=default_lw * 1.15, label=agg_lbl, zorder=4)
             all_y_for_marginal.append((center, agg_col))
 
             if panel.show_mean_line:
@@ -433,7 +450,7 @@ def _render_xy_panel(
             plot_kind = "density2d" if first_ds.detected_type == "ramachandran" else "line"
 
         if plot_kind == "density2d":
-            _render_density2d(ax, panel, transformed_series, first_ds)
+            _render_density2d(ax, panel, transformed_series, first_ds, max_plot_points=max_plot_points)
         for idx, (s_t, st, col) in enumerate([] if plot_kind == "density2d" else transformed_series):
             lw = (st.linewidth if st and st.linewidth is not None else default_lw)
             ls = st.linestyle if st else "-"
@@ -460,9 +477,10 @@ def _render_xy_panel(
                 continue
 
             if plot_kind == "scatter":
+                sc_step = max(1, len(s_t.x) // max(2000, max_plot_points)) if max_plot_points > 0 else 1
                 ax.scatter(
-                    s_t.x,
-                    s_t.y,
+                    s_t.x[::sc_step],
+                    s_t.y[::sc_step],
                     color=col,
                     s=(ms * 2.5) ** 2 / 2.0,
                     alpha=alpha,
@@ -478,17 +496,19 @@ def _render_xy_panel(
             if panel.smoothing_method != "none":
                 y_smooth = smooth_series(s_t.y, panel.smoothing_method, panel.smoothing_window)
                 if panel.show_raw_under_smooth:
+                    xr, yr = minmax_downsample(s_t.x, s_t.y, max_plot_points)
                     ax.plot(
-                        s_t.x,
-                        s_t.y,
+                        xr,
+                        yr,
                         color=col,
                         linewidth=max(0.5, lw * 0.6),
                         alpha=panel.raw_alpha,
                         zorder=zorder - 1,
                     )
+                xs_p, ys_p = minmax_downsample(s_t.x, y_smooth, max_plot_points)
                 ax.plot(
-                    s_t.x,
-                    y_smooth,
+                    xs_p,
+                    ys_p,
                     color=col,
                     linewidth=lw * 1.1,
                     linestyle=ls,
@@ -502,18 +522,22 @@ def _render_xy_panel(
             else:
                 if s_t.dy is not None and panel.show_errorbars:
                     if panel.errorbar_style == "band":
+                        xb, cb, lob, hib = minmax_downsample_band(
+                            s_t.x, s_t.y, s_t.y - s_t.dy, s_t.y + s_t.dy, max_plot_points
+                        )
                         ax.fill_between(
-                            s_t.x,
-                            s_t.y - s_t.dy,
-                            s_t.y + s_t.dy,
+                            xb,
+                            lob,
+                            hib,
                             color=col,
                             alpha=0.22,
                             linewidth=0,
                             zorder=zorder - 1,
                         )
+                        xp, yp = minmax_downsample(s_t.x, s_t.y, max_plot_points)
                         ax.plot(
-                            s_t.x,
-                            s_t.y,
+                            xp,
+                            yp,
                             color=col,
                             linewidth=lw,
                             linestyle=ls,
@@ -541,9 +565,10 @@ def _render_xy_panel(
                             zorder=zorder,
                         )
                 else:
+                    xp, yp = minmax_downsample(s_t.x, s_t.y, max_plot_points)
                     ax.plot(
-                        s_t.x,
-                        s_t.y,
+                        xp,
+                        yp,
                         color=col,
                         linewidth=lw,
                         linestyle=ls,
@@ -556,7 +581,8 @@ def _render_xy_panel(
                 y_for_stats = s_t.y
 
             if st and st.fill_under:
-                ax.fill_between(s_t.x, 0, y_for_stats, color=col, alpha=0.14, zorder=1)
+                xf, yf = minmax_downsample(s_t.x, y_for_stats, max_plot_points)
+                ax.fill_between(xf, 0, yf, color=col, alpha=0.14, zorder=1)
 
             if panel.show_mean_line:
                 start = int(len(s_t.y) * panel.equilibration_fraction)
@@ -642,7 +668,8 @@ def _render_xy_panel(
             )
             if panel.marginal_kde and np.nanstd(vals) > 1e-12:
                 try:
-                    kde = gaussian_kde(vals)
+                    kde_step = max(1, len(vals) // 50000)
+                    kde = gaussian_kde(vals[::kde_step])
                     ax_marg.plot(kde(y_grid), y_grid, color=col, linewidth=max(0.8, default_lw * 0.85))
                 except Exception:
                     pass
@@ -694,7 +721,7 @@ def render_to_figure(spec: FigureSpec, datasets: dict[str, ParsedDataset]) -> Fi
             if matrix_ds is not None and panel.plot_type in {"auto", "matrix", "contour"}:
                 _render_matrix_panel(ax, panel, matrix_ds, preset.axes_linewidth)
             else:
-                _render_xy_panel(ax, panel, xy_items, palette, default_lw)
+                _render_xy_panel(ax, panel, xy_items, palette, default_lw, max_plot_points=spec.max_plot_points)
 
             # Panel labels (a, b, c, ...)
             if multi_panel and spec.panel_labels != "none":

@@ -1,10 +1,14 @@
 # GMXgrace
 
 [![CI](https://github.com/pritampanda15/GMXgrace/actions/workflows/ci.yml/badge.svg)](https://github.com/pritampanda15/GMXgrace/actions/workflows/ci.yml)
+[![Online Studio](https://img.shields.io/badge/Online%20Studio-GitHub%20Pages%20(Live)-1d4ed8.svg)](https://pritampanda15.github.io/GMXgrace/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Academic Non-Commercial](https://img.shields.io/badge/License-Academic%20Non--Commercial-orange.svg)](LICENSE)
 
 **Publication-quality GROMACS plotting suite** — a modern Python CLI, Python API, and interactive **Online Web Studio** replacement for `xmgrace`.
+
+**Try Online (Free & Private, runs locally in your browser via Pyodide WebAssembly):**  
+👉 **https://pritampanda15.github.io/GMXgrace/** *(your trajectory files never leave your computer)*
 
 One unified Matplotlib rendering engine powers both the command line and the browser studio, so figures crafted interactively online and figures scripted on an HPC cluster are **100% identical**.
 

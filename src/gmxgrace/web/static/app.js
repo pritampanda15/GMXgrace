@@ -29,6 +29,7 @@
       suptitle: "",
       dpi: 300,
       transparent: false,
+      max_plot_points: 12000,
       panels: [createDefaultPanel("panel-1")],
     },
   };
@@ -107,20 +108,214 @@
   }
 
   // -------------------------------------------------------------------------
+  // Dual-Mode Backend Adapter (FastAPI Local Server OR Browser Pyodide WASM)
+  // -------------------------------------------------------------------------
+
+  const MIME_MAP = {
+    svg: "image/svg+xml",
+    pdf: "application/pdf",
+    eps: "application/postscript",
+    png: "image/png",
+    tiff: "image/tiff",
+    tif: "image/tiff",
+  };
+
+  let backendMode = "fastapi";
+  let pyWorker = null;
+  let workerMsgId = 0;
+  const workerPending = new Map();
+
+  function updateLoader(stage, pct) {
+    const st = $("loader-stage");
+    const fill = $("loader-fill");
+    if (st) st.textContent = stage;
+    if (fill && pct != null) fill.style.width = `${pct}%`;
+  }
+
+  function workerCall(action, payload = {}) {
+    return new Promise((resolve, reject) => {
+      const id = ++workerMsgId;
+      workerPending.set(id, { resolve, reject });
+      pyWorker.postMessage({ id, action, payload });
+    });
+  }
+
+  async function initBackend() {
+    // 1. Check if FastAPI server is active on this origin
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1400);
+      const resp = await fetch("./api/health", { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (resp.ok) {
+        const data = await resp.json().catch(() => null);
+        if (data && data.status === "ok") {
+          backendMode = "fastapi";
+          const badge = $("engine-badge");
+          if (badge) {
+            badge.textContent = "Local Server";
+            badge.title = "Connected to local FastAPI Python backend";
+          }
+          return;
+        }
+      }
+    } catch {
+      // Static hosting (GitHub Pages) — fall through to Pyodide WebAssembly engine
+    }
+
+    // 2. Boot browser-local Pyodide Web Worker (100% client-side & private)
+    backendMode = "pyodide";
+    const badge = $("engine-badge");
+    if (badge) {
+      badge.textContent = "Browser WASM · Private";
+      badge.classList.add("wasm");
+      badge.title = "Running Python/Matplotlib locally in your browser via Pyodide WebAssembly — your files never leave your machine";
+    }
+    setRenderStatus("busy", "Loading WASM Python…");
+    updateLoader("Fetching GMXgrace wheel manifest…", 8);
+
+    const manifestResp = await fetch("./wheel_manifest.json");
+    if (!manifestResp.ok) {
+      throw new Error("Could not find wheel_manifest.json for static Pyodide mode.");
+    }
+    const manifest = await manifestResp.json();
+
+    pyWorker = new Worker("./pyodide-worker.js");
+    pyWorker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === "progress") {
+        updateLoader(msg.stage, msg.pct);
+        setRenderStatus("busy", msg.pct < 100 ? `Loading Python (${msg.pct}%)…` : "Engine ready");
+        return;
+      }
+      const pending = workerPending.get(msg.id);
+      if (!pending) return;
+      workerPending.delete(msg.id);
+      if (msg.ok) pending.resolve(msg.data);
+      else pending.reject(new Error(msg.error || "Worker error"));
+    };
+    pyWorker.onerror = (err) => {
+      console.error("Pyodide worker error:", err);
+      setRenderStatus("error", "WASM worker failed");
+    };
+
+    await workerCall("init", { wheelUrl: manifest.wheel });
+  }
+
+  const backend = {
+    async getPresets() {
+      if (backendMode === "pyodide") return workerCall("presets");
+      const resp = await fetch("./api/presets");
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp.json();
+    },
+
+    async loadSample(bundleId) {
+      if (backendMode === "pyodide") return workerCall("sample", { bundleId });
+      const resp = await fetch(`./api/samples/${bundleId}`, { method: "POST" });
+      if (!resp.ok) throw new Error(await resp.text());
+      return resp.json();
+    },
+
+    async uploadFiles(fileList, nxy) {
+      if (backendMode === "pyodide") {
+        const files = [];
+        for (const f of fileList) {
+          const buf = await f.arrayBuffer();
+          files.push({ name: f.name, bytes: new Uint8Array(buf) });
+        }
+        const data = await workerCall("upload", { files, nxy });
+        if (!data.datasets.length && data.errors.length) {
+          throw new Error(data.errors[0].error || "Parse failed");
+        }
+        return data;
+      }
+      const fd = new FormData();
+      for (const f of fileList) fd.append("files", f);
+      fd.append("nxy", nxy ? "true" : "false");
+      const resp = await fetch("./api/upload", { method: "POST", body: fd });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.detail?.errors?.[0]?.error || data.detail?.message || "Upload failed");
+      }
+      return data;
+    },
+
+    async deleteDataset(datasetId) {
+      if (backendMode === "pyodide") return workerCall("delete", { datasetId });
+      await fetch(`./api/datasets/${datasetId}`, { method: "DELETE" }).catch(() => {});
+    },
+
+    async renderSvg(spec) {
+      if (backendMode === "pyodide") {
+        const buf = await workerCall("render", { spec, fmt: "svg" });
+        return new TextDecoder("utf-8").decode(buf);
+      }
+      const resp = await fetch("./api/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec, fmt: "svg" }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: "Render failed" }));
+        throw new Error(err.detail || "Render error");
+      }
+      return resp.text();
+    },
+
+    async renderBlob(spec, fmt, dpi, filename) {
+      if (backendMode === "pyodide") {
+        const buf = await workerCall("render", { spec, fmt, dpi });
+        return new Blob([buf], { type: MIME_MAP[fmt] || "application/octet-stream" });
+      }
+      const resp = await fetch("./api/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec, fmt, dpi, filename }),
+      });
+      if (!resp.ok) throw new Error("Export failed");
+      return resp.blob();
+    },
+
+    async codegen(spec, outputName) {
+      if (backendMode === "pyodide") return workerCall("codegen", { spec, outputName });
+      const resp = await fetch("./api/codegen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec, output_name: outputName }),
+      });
+      if (!resp.ok) throw new Error("Codegen failed");
+      return resp.json();
+    },
+
+    async stats(datasetIds, eqFraction) {
+      if (backendMode === "pyodide") return workerCall("stats", { datasetIds, eqFraction });
+      const resp = await fetch("./api/stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataset_ids: datasetIds, eq_fraction: eqFraction }),
+      });
+      if (!resp.ok) throw new Error("Stats failed");
+      return resp.json();
+    },
+  };
+
+  // -------------------------------------------------------------------------
   // Initialization
   // -------------------------------------------------------------------------
 
   async function init() {
     bindStaticEvents();
     try {
-      const resp = await fetch("/api/presets");
-      state.presets = await resp.json();
+      await initBackend();
+      state.presets = await backend.getPresets();
       renderPresetControls();
       // Auto-load the 4-panel Nature MD showcase so the user sees an instant live publication figure
       await loadSampleBundle("md-4panel");
     } catch (err) {
       console.error(err);
-      setRenderStatus("error", "API unavailable");
+      setRenderStatus("error", err.message || "Engine unavailable");
+      updateLoader(`Failed to start engine: ${err.message || err}`, 100);
     }
   }
 
@@ -191,9 +386,7 @@
   async function loadSampleBundle(bundleId) {
     setRenderStatus("busy", "Loading demo…");
     try {
-      const resp = await fetch(`/api/samples/${bundleId}`, { method: "POST" });
-      if (!resp.ok) throw new Error(await resp.text());
-      const data = await resp.json();
+      const data = await backend.loadSample(bundleId);
       state.datasets = {};
       data.datasets.forEach((ds) => {
         state.datasets[ds.id] = ds;
@@ -221,28 +414,14 @@
 
   async function handleFiles(fileList) {
     if (!fileList || !fileList.length) return;
-    const fd = new FormData();
-    for (const f of fileList) {
-      fd.append("files", f);
-    }
-    fd.append("nxy", $("upload-nxy").checked ? "true" : "false");
-
+    const nxy = $("upload-nxy").checked;
     const statusEl = $("upload-status");
     statusEl.classList.add("hidden");
     setRenderStatus("busy", "Parsing files…");
 
     try {
-      const resp = await fetch("/api/upload", { method: "POST", body: fd });
-      const data = await resp.json();
-      if (!resp.ok) {
-        const msg = data.detail?.errors?.[0]?.error || data.detail?.message || "Upload failed";
-        statusEl.textContent = msg;
-        statusEl.classList.remove("hidden");
-        setRenderStatus("error", "Parse error");
-        return;
-      }
+      const data = await backend.uploadFiles(fileList, nxy);
 
-      const activePanel = getActivePanel();
       // If user uploads fresh files while on a demo with empty/demo files, attach cleanly to active panel
       if (state.activeDemo) {
         state.activeDemo = null;
@@ -341,7 +520,7 @@
       });
 
       item.querySelector("[data-del]").addEventListener("click", async () => {
-        await fetch(`/api/datasets/${id}`, { method: "DELETE" }).catch(() => {});
+        await backend.deleteDataset(id);
         delete state.datasets[id];
         state.spec.panels.forEach((p) => {
           p.dataset_ids = p.dataset_ids.filter((x) => x !== id);
@@ -419,6 +598,9 @@
     $("ctrl-line-width").value = state.spec.line_width ?? "";
     $("ctrl-transparent").checked = Boolean(state.spec.transparent);
     $("ctrl-suptitle").value = state.spec.suptitle || "";
+    if ($("ctrl-max-pts")) {
+      $("ctrl-max-pts").value = String(state.spec.max_plot_points ?? 12000);
+    }
 
     updateDimensionsReadout();
   }
@@ -625,55 +807,38 @@
     updateDimensionsReadout();
 
     try {
-      const [svgResp, codeResp, statsResp] = await Promise.all([
-        fetch("/api/render", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spec: state.spec, fmt: "svg" }),
-        }),
-        fetch("/api/codegen", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spec: state.spec, output_name: "publication_figure.pdf" }),
-        }),
-        fetch("/api/stats", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            dataset_ids: Object.keys(state.datasets),
-            eq_fraction: getActivePanel().equilibration_fraction || 0,
-          }),
-        }),
+      const [svgRes, codeRes, statsRes] = await Promise.allSettled([
+        backend.renderSvg(state.spec),
+        backend.codegen(state.spec, "publication_figure.pdf"),
+        backend.stats(Object.keys(state.datasets), getActivePanel().equilibration_fraction || 0),
       ]);
 
       if (seq !== state.renderSeq) return; // stale response
 
-      if (!svgResp.ok) {
-        const err = await svgResp.json().catch(() => ({ detail: "Render failed" }));
-        setRenderStatus("error", err.detail || "Render error");
-        $("svg-preview").innerHTML = `<div class="empty-canvas" style="color:#dc2626">${err.detail || "Render error"}</div>`;
+      if (svgRes.status === "rejected") {
+        const msg = svgRes.reason?.message || "Render error";
+        setRenderStatus("error", msg);
+        $("svg-preview").innerHTML = `<div class="empty-canvas" style="color:#dc2626">${msg}</div>`;
       } else {
-        const svgText = await svgResp.text();
-        $("svg-preview").innerHTML = svgText;
+        $("svg-preview").innerHTML = svgRes.value;
         applyZoom();
         setRenderStatus("ok", "Live SVG Ready");
       }
 
-      if (codeResp.ok) {
-        const code = await codeResp.json();
+      if (codeRes.status === "fulfilled") {
+        const code = codeRes.value;
         $("cli-code").textContent = code.cli;
         $("python-code").textContent = code.python;
         state.lastRecipe = code.recipe;
       }
 
-      if (statsResp.ok) {
-        const stats = await statsResp.json();
-        state.lastStats = stats.stats || [];
+      if (statsRes.status === "fulfilled") {
+        state.lastStats = statsRes.value.stats || [];
         renderStatsTable(state.lastStats);
       }
     } catch (err) {
       if (seq === state.renderSeq) {
-        setRenderStatus("error", "Connection error");
+        setRenderStatus("error", err.message || "Render error");
       }
     }
   }
@@ -730,18 +895,12 @@
   async function exportFigure(fmt) {
     setRenderStatus("busy", `Exporting ${fmt.toUpperCase()}…`);
     try {
-      const resp = await fetch("/api/render", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spec: state.spec,
-          fmt,
-          dpi: state.spec.dpi,
-          filename: `gmxgrace_${state.spec.journal}`,
-        }),
-      });
-      if (!resp.ok) throw new Error("Export failed");
-      const blob = await resp.blob();
+      const blob = await backend.renderBlob(
+        state.spec,
+        fmt,
+        state.spec.dpi,
+        `gmxgrace_${state.spec.journal}`
+      );
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -980,6 +1139,12 @@
       state.spec.suptitle = e.target.value;
       scheduleRender();
     });
+    if ($("ctrl-max-pts")) {
+      $("ctrl-max-pts").addEventListener("change", (e) => {
+        state.spec.max_plot_points = Number(e.target.value);
+        scheduleRender();
+      });
+    }
 
     // Panel Axes controls
     const bindPanel = (id, key, transform = (v) => v, evt = "input") => {
