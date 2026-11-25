@@ -68,6 +68,10 @@ def _rpc_codegen(spec_json, output_name):
 def _rpc_stats(dataset_ids_json, eq_fraction):
     ds_ids = json.loads(dataset_ids_json)
     return json.dumps(_session.stats(ds_ids, eq_fraction=float(eq_fraction)))
+
+def _rpc_fel_minima(spec_json):
+    spec = json.loads(spec_json)
+    return json.dumps(_session.fel_minima(spec))
 `);
 
   reportProgress("Browser Python engine ready!", 100);
@@ -166,6 +170,12 @@ self.onmessage = async (event) => {
         JSON.stringify(payload.datasetIds || []),
         payload.eqFraction || 0.0
       );
+      self.postMessage({ id, ok: true, data: JSON.parse(jsonStr) });
+      return;
+    }
+
+    if (action === "fel_minima") {
+      const jsonStr = pyodide.globals.get("_rpc_fel_minima")(JSON.stringify(payload.spec));
       self.postMessage({ id, ok: true, data: JSON.parse(jsonStr) });
       return;
     }

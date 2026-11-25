@@ -516,6 +516,43 @@ html, body {
   background: #fef2f2;
 }
 
+.coords-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 999px;
+  max-width: 310px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.conv-pill.ok {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.conv-pill.warn {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.conv-pill.bad {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
 .canvas-tools {
   display: flex;
   gap: 4px;

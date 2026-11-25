@@ -50,6 +50,10 @@
       y_max: null,
       x_scale: "linear",
       y_scale: "linear",
+      y2_label: null,
+      y2_min: null,
+      y2_max: null,
+      y2_unit: "original",
       x_unit: "original",
       y_unit: "original",
       smoothing_method: "none",
@@ -67,6 +71,15 @@
       marginal_bins: 35,
       equilibration_fraction: 0.0,
       show_mean_line: false,
+      fel_temp_k: 300.0,
+      fel_bins: 45,
+      fel_unit: "kJ/mol",
+      fel_mark_minima: true,
+      show_pvalues: true,
+      stat_test: "mannwhitney",
+      convergence_blocks: 5,
+      domain_tracks: [],
+      zoom_inset: null,
       cmap: "RdYlBu_r",
       show_contours: true,
       contour_levels: 10,
@@ -298,6 +311,17 @@
       if (!resp.ok) throw new Error("Stats failed");
       return resp.json();
     },
+
+    async felMinima(spec) {
+      if (backendMode === "pyodide") return workerCall("fel_minima", { spec });
+      const resp = await fetch("./api/fel_minima", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec }),
+      });
+      if (!resp.ok) throw new Error("FEL minima failed");
+      return resp.json();
+    },
   };
 
   // -------------------------------------------------------------------------
@@ -468,6 +492,7 @@
     syncActivePanelControls();
     renderSeriesEditor();
     renderAnnotationsList();
+    renderDomainsList();
   }
 
   function renderDatasetList() {
@@ -627,6 +652,8 @@
     $("p-y-unit").value = p.y_unit || "original";
     $("p-xlabel").value = p.x_label ?? "";
     $("p-ylabel").value = p.y_label ?? "";
+    if ($("p-y2label")) $("p-y2label").value = p.y2_label ?? "";
+    if ($("p-y2-unit")) $("p-y2-unit").value = p.y2_unit || "original";
     $("p-xmin").value = p.x_min ?? "";
     $("p-xmax").value = p.x_max ?? "";
     $("p-ymin").value = p.y_min ?? "";
@@ -658,6 +685,38 @@
     $("p-contours").value = String(p.contour_levels || 10);
     $("p-cbar-label").value = p.colorbar_label ?? "";
     $("p-show-contours").checked = p.show_contours !== false;
+
+    // FEL 2D, Stats/Convergence & Zoom Inset controls
+    if ($("p-fel-temp")) $("p-fel-temp").value = String(p.fel_temp_k ?? 300);
+    if ($("p-fel-bins")) $("p-fel-bins").value = String(p.fel_bins ?? 45);
+    if ($("p-fel-unit")) $("p-fel-unit").value = p.fel_unit || "kJ/mol";
+    if ($("p-fel-minima")) $("p-fel-minima").checked = p.fel_mark_minima !== false;
+    if ($("p-stat-test")) $("p-stat-test").value = p.stat_test || "mannwhitney";
+    if ($("p-conv-blocks")) $("p-conv-blocks").value = String(p.convergence_blocks ?? 5);
+    if ($("p-show-pvalues")) $("p-show-pvalues").checked = p.show_pvalues !== false;
+    const zin = p.zoom_inset || {};
+    if ($("p-inset-enabled")) $("p-inset-enabled").checked = Boolean(zin.enabled);
+    if ($("p-inset-xmin")) $("p-inset-xmin").value = zin.x_min ?? "";
+    if ($("p-inset-xmax")) $("p-inset-xmax").value = zin.x_max ?? "";
+    if ($("p-inset-loc")) $("p-inset-loc").value = zin.loc || "lower right";
+  }
+
+  function renderDomainsList() {
+    const list = $("dom-list");
+    if (!list) return;
+    const p = getActivePanel();
+    list.innerHTML = "";
+    (p.domain_tracks || []).forEach((tr, idx) => {
+      const row = document.createElement("div");
+      row.className = "ann-item";
+      row.innerHTML = `<span><span class="swatch" style="display:inline-block;vertical-align:middle;margin-right:5px;background:${tr.color}"></span>${tr.label} (${tr.start}–${tr.end})</span><button class="icon-btn danger">×</button>`;
+      row.querySelector("button").addEventListener("click", () => {
+        p.domain_tracks.splice(idx, 1);
+        renderDomainsList();
+        scheduleRender();
+      });
+      list.appendChild(row);
+    });
   }
 
   function renderAnnotationsList() {
@@ -708,6 +767,7 @@
               markersize: 3.5,
               alpha: 1.0,
               fill_under: false,
+              y_axis: "left",
             };
             p.series_styles.push(st);
           }
@@ -739,14 +799,21 @@
             </select>
             <input type="number" class="s-lw" step="0.1" min="0.2" max="5" placeholder="LW" value="${st?.linewidth ?? ""}" title="Line width (pt)" />
           </div>
-          <label class="toggle-row">
-            <input type="checkbox" class="s-fill" ${st?.fill_under ? "checked" : ""} />
-            <span>Fill area under curve</span>
-          </label>
+          <div class="control-row" style="align-items:center">
+            <label class="toggle-row">
+              <input type="checkbox" class="s-fill" ${st?.fill_under ? "checked" : ""} />
+              <span>Fill under</span>
+            </label>
+            <select class="s-yaxis" title="Assign to Left or Right Y-axis (Twin-Y)">
+              <option value="left">Left Y-Axis</option>
+              <option value="right">Right Y-Axis</option>
+            </select>
+          </div>
         `;
 
         card.querySelector(".s-ls").value = st?.linestyle || "-";
         card.querySelector(".s-mk").value = st?.marker || "none";
+        card.querySelector(".s-yaxis").value = st?.y_axis || "left";
 
         card.querySelector(".s-vis").addEventListener("change", (e) => {
           ensureStyle().visible = e.target.checked;
@@ -774,6 +841,10 @@
         });
         card.querySelector(".s-fill").addEventListener("change", (e) => {
           ensureStyle().fill_under = e.target.checked;
+          scheduleRender();
+        });
+        card.querySelector(".s-yaxis").addEventListener("change", (e) => {
+          ensureStyle().y_axis = e.target.value;
           scheduleRender();
         });
 
@@ -807,10 +878,12 @@
     updateDimensionsReadout();
 
     try {
-      const [svgRes, codeRes, statsRes] = await Promise.allSettled([
+      const hasFel2d = state.spec.panels.some((p) => p.plot_type === "fel2d");
+      const [svgRes, codeRes, statsRes, felRes] = await Promise.allSettled([
         backend.renderSvg(state.spec),
         backend.codegen(state.spec, "publication_figure.pdf"),
         backend.stats(Object.keys(state.datasets), getActivePanel().equilibration_fraction || 0),
+        hasFel2d ? backend.felMinima(state.spec) : Promise.resolve({ fel_panels: [] }),
       ]);
 
       if (seq !== state.renderSeq) return; // stale response
@@ -822,6 +895,7 @@
       } else {
         $("svg-preview").innerHTML = svgRes.value;
         applyZoom();
+        attachSvgHoverInspector();
         setRenderStatus("ok", "Live SVG Ready");
       }
 
@@ -836,11 +910,129 @@
         state.lastStats = statsRes.value.stats || [];
         renderStatsTable(state.lastStats);
       }
+
+      if (felRes.status === "fulfilled") {
+        renderFelMinimaTable(felRes.value.fel_panels || []);
+      }
     } catch (err) {
       if (seq === state.renderSeq) {
         setRenderStatus("error", err.message || "Render error");
       }
     }
+  }
+
+  function attachSvgHoverInspector() {
+    const svg = $("svg-preview")?.querySelector("svg");
+    const readout = $("hover-coords");
+    if (!svg || !readout) return;
+    const desc = svg.querySelector("#gmxgrace-axes-meta");
+    if (!desc) return;
+    let metaList = [];
+    try {
+      metaList = JSON.parse(desc.textContent || "[]");
+    } catch {
+      return;
+    }
+
+    const mapPoint = (e) => {
+      for (const m of metaList) {
+        const g = svg.querySelector(`#${CSS.escape(m.gid)}`);
+        if (!g) continue;
+        // First child patch inside a Matplotlib axes group is the exact data-frame box
+        const patch = g.querySelector('[id^="patch_"]') || g;
+        const rect = patch.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          const fx = (e.clientX - rect.left) / rect.width;
+          const fy = 1.0 - (e.clientY - rect.top) / rect.height;
+          let xVal = m.xlim[0] + fx * (m.xlim[1] - m.xlim[0]);
+          let yVal = m.ylim[0] + fy * (m.ylim[1] - m.ylim[0]);
+          if (m.xscale === "log" && m.xlim[0] > 0 && m.xlim[1] > 0) {
+            xVal = Math.pow(10, Math.log10(m.xlim[0]) + fx * (Math.log10(m.xlim[1]) - Math.log10(m.xlim[0])));
+          }
+          if (m.yscale === "log" && m.ylim[0] > 0 && m.ylim[1] > 0) {
+            yVal = Math.pow(10, Math.log10(m.ylim[0]) + fy * (Math.log10(m.ylim[1]) - Math.log10(m.ylim[0])));
+          }
+          return { xVal, yVal, meta: m };
+        }
+      }
+      return null;
+    };
+
+    svg.style.cursor = "crosshair";
+    svg.addEventListener("mousemove", (e) => {
+      const hit = mapPoint(e);
+      if (!hit) {
+        readout.textContent = "Hover plot for (x, y)";
+        return;
+      }
+      const xStr = Number.isFinite(hit.xVal) ? hit.xVal.toPrecision(4) : "—";
+      const yStr = Number.isFinite(hit.yVal) ? hit.yVal.toPrecision(4) : "—";
+      readout.textContent = `x = ${xStr}, y = ${yStr}`;
+    });
+
+    svg.addEventListener("mouseleave", () => {
+      readout.textContent = "Hover plot for (x, y)";
+    });
+
+    svg.addEventListener("click", async (e) => {
+      const hit = mapPoint(e);
+      if (!hit) return;
+      const xStr = hit.xVal.toFixed(3);
+      const yStr = hit.yVal.toFixed(3);
+      const xl = (hit.meta.xlabel || "").toLowerCase();
+      let msg = `Pinned (${xStr}, ${yStr})`;
+      let clip = `${xStr}, ${yStr}`;
+      if (xl.includes("time")) {
+        const psVal = xl.includes("(ns)") ? hit.xVal * 1000 : hit.xVal;
+        clip = `gmx trjconv -s md.tpr -f md.xtc -o frame.pdb -dump ${psVal.toFixed(1)}`;
+        msg = `Copied: ${clip}`;
+      }
+      try {
+        await navigator.clipboard.writeText(clip);
+      } catch {
+        // clipboard optional
+      }
+      showToast(msg);
+    });
+  }
+
+  function renderFelMinimaTable(felPanels) {
+    const tbody = $("fel-tbody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+    const allRows = [];
+    felPanels.forEach((fp) => {
+      (fp.minima || []).forEach((m) => allRows.push({ fp, m }));
+    });
+    if (!allRows.length) {
+      tbody.innerHTML = `<tr><td colspan="7" style="color:#64748b">Load "FEL (2 XVGs)" or set Plot Mode → "2D FEL (2 XVGs)" with 2 series to detect energy minima.</td></tr>`;
+      return;
+    }
+    allRows.forEach(({ fp, m }) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${m.label}</strong></td>
+        <td>${m.x}</td>
+        <td>${m.y}</td>
+        <td>${m.dg} ${fp.unit}</td>
+        <td>${m.time} ${fp.time_unit}</td>
+        <td>#${m.frame_index}</td>
+        <td>
+          <code style="font-size:11px;margin-right:6px">${m.trjconv_cmd}</code>
+          <button class="btn btn-outline btn-sm fel-copy">Copy</button>
+        </td>
+      `;
+      tr.querySelector(".fel-copy").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(m.trjconv_cmd);
+          showToast(`Copied ${m.label} trjconv command!`);
+        } catch {
+          showToast("Copy blocked by browser");
+        }
+      });
+      tbody.appendChild(tr);
+    });
   }
 
   function formatLabelHtml(text) {
@@ -861,11 +1053,13 @@
     const tbody = $("stats-tbody");
     tbody.innerHTML = "";
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="8" style="color:#64748b">No XY series loaded.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" style="color:#64748b">No XY series loaded.</td></tr>`;
       return;
     }
     const fmt = (v) => (Number.isFinite(v) ? Number(v).toPrecision(4) : "—");
     rows.forEach((r) => {
+      const status = r.convergence_status || "—";
+      const cls = status === "Converged" ? "ok" : status === "Mild Drift" ? "warn" : "bad";
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${r.filename}</td>
@@ -876,6 +1070,9 @@
         <td>${fmt(r.mean)} ± ${fmt(r.std)}</td>
         <td>${fmt(r.median)}</td>
         <td>${fmt(r.eq_mean)} ± ${fmt(r.eq_std)}</td>
+        <td>${fmt(r.block_sem)}</td>
+        <td>${Number.isFinite(r.n_eff) ? Math.round(r.n_eff) : "—"}</td>
+        <td><span class="conv-pill ${cls}">${status}</span></td>
       `;
       tbody.appendChild(tr);
     });
@@ -1001,10 +1198,10 @@
         showToast("No XY statistics to export");
         return;
       }
-      const header = ["filename", "series", "count", "min", "max", "mean", "std", "median", "eq_mean", "eq_std"];
+      const header = ["filename", "series", "count", "min", "max", "mean", "std", "median", "eq_mean", "eq_std", "block_sem", "drift_total", "tau_frames", "n_eff", "convergence_status"];
       const lines = [header.join(",")];
       state.lastStats.forEach((r) => {
-        const vals = [r.filename, r.name, r.count, r.min, r.max, r.mean, r.std, r.median, r.eq_mean, r.eq_std]
+        const vals = [r.filename, r.name, r.count, r.min, r.max, r.mean, r.std, r.median, r.eq_mean, r.eq_std, r.block_sem, r.drift_total, r.tau_frames, r.n_eff, r.convergence_status]
           .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`);
         lines.push(vals.join(","));
       });
@@ -1063,6 +1260,9 @@
         tab.classList.add("active");
         $("drawer-reproduce").classList.toggle("hidden", tab.dataset.drawer !== "reproduce");
         $("drawer-stats").classList.toggle("hidden", tab.dataset.drawer !== "stats");
+        if ($("drawer-fel")) {
+          $("drawer-fel").classList.toggle("hidden", tab.dataset.drawer !== "fel");
+        }
         $("bottom-drawer").classList.remove("collapsed");
       });
     });
@@ -1162,6 +1362,8 @@
     bindPanel("p-y-unit", "y_unit", (v) => v, "change");
     bindPanel("p-xlabel", "x_label", (v) => (v.trim() === "" ? null : v));
     bindPanel("p-ylabel", "y_label", (v) => (v.trim() === "" ? null : v));
+    if ($("p-y2label")) bindPanel("p-y2label", "y2_label", (v) => (v.trim() === "" ? null : v));
+    if ($("p-y2-unit")) bindPanel("p-y2-unit", "y2_unit", (v) => v, "change");
     bindPanel("p-xmin", "x_min", parseOptionalFloat);
     bindPanel("p-xmax", "x_max", parseOptionalFloat);
     bindPanel("p-ymin", "y_min", parseOptionalFloat);
@@ -1201,6 +1403,64 @@
     bindPanel("p-contours", "contour_levels", (v) => Math.max(2, Number(v) || 10));
     bindPanel("p-cbar-label", "colorbar_label", (v) => (v.trim() === "" ? null : v));
     bindPanel("p-show-contours", "show_contours", Boolean, "change");
+
+    // FEL 2D, System Comparison & Convergence controls
+    if ($("p-fel-temp")) bindPanel("p-fel-temp", "fel_temp_k", (v) => Math.max(10, Number(v) || 300));
+    if ($("p-fel-bins")) bindPanel("p-fel-bins", "fel_bins", (v) => Math.max(10, Number(v) || 45));
+    if ($("p-fel-unit")) bindPanel("p-fel-unit", "fel_unit", (v) => v, "change");
+    if ($("p-fel-minima")) bindPanel("p-fel-minima", "fel_mark_minima", Boolean, "change");
+    if ($("p-stat-test")) bindPanel("p-stat-test", "stat_test", (v) => v, "change");
+    if ($("p-conv-blocks")) bindPanel("p-conv-blocks", "convergence_blocks", (v) => Math.max(2, Number(v) || 5));
+    if ($("p-show-pvalues")) bindPanel("p-show-pvalues", "show_pvalues", Boolean, "change");
+
+    // Zoom Inset controls
+    const ensureInset = () => {
+      const p = getActivePanel();
+      if (!p.zoom_inset) {
+        p.zoom_inset = { enabled: false, x_min: null, x_max: null, y_min: null, y_max: null, loc: "lower right", width_pct: 36, height_pct: 34 };
+      }
+      return p.zoom_inset;
+    };
+    if ($("p-inset-enabled")) {
+      $("p-inset-enabled").addEventListener("change", (e) => {
+        ensureInset().enabled = e.target.checked;
+        scheduleRender();
+      });
+      $("p-inset-xmin").addEventListener("input", (e) => {
+        ensureInset().x_min = parseOptionalFloat(e.target.value);
+        scheduleRender();
+      });
+      $("p-inset-xmax").addEventListener("input", (e) => {
+        ensureInset().x_max = parseOptionalFloat(e.target.value);
+        scheduleRender();
+      });
+      $("p-inset-loc").addEventListener("change", (e) => {
+        ensureInset().loc = e.target.value;
+        scheduleRender();
+      });
+    }
+
+    // Protein Domain Track builder
+    if ($("btn-add-dom")) {
+      $("btn-add-dom").addEventListener("click", () => {
+        const start = parseOptionalFloat($("dom-start").value);
+        const end = parseOptionalFloat($("dom-end").value);
+        const label = $("dom-label").value.trim();
+        const color = $("dom-color").value || "#3B82F6";
+        if (start === null || end === null || end <= start || !label) {
+          showToast("Enter start < end residue numbers and a domain label");
+          return;
+        }
+        const p = getActivePanel();
+        if (!p.domain_tracks) p.domain_tracks = [];
+        p.domain_tracks.push({ start, end, label, color });
+        $("dom-start").value = "";
+        $("dom-end").value = "";
+        $("dom-label").value = "";
+        renderDomainsList();
+        scheduleRender();
+      });
+    }
 
     // Annotations
     $("btn-add-ann").addEventListener("click", () => {

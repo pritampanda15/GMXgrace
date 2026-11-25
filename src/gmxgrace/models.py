@@ -152,7 +152,30 @@ class SeriesStyleSpec(BaseModel):
     markersize: float = 3.5
     alpha: float = 1.0
     fill_under: bool = False
+    y_axis: Literal["left", "right"] = "left"
     zorder: int | None = None
+
+
+class DomainTrackSpec(BaseModel):
+    """Colored protein domain / structural motif bar rendered along the top of a panel (e.g. RMSF)."""
+
+    start: float
+    end: float
+    label: str
+    color: str = "#3B82F6"
+
+
+class ZoomInsetSpec(BaseModel):
+    """Magnified zoom inset box with publication connector lines."""
+
+    enabled: bool = False
+    x_min: float | None = None
+    x_max: float | None = None
+    y_min: float | None = None
+    y_max: float | None = None
+    loc: Literal["upper right", "upper left", "lower right", "lower left"] = "upper right"
+    width_pct: float = Field(default=36.0, ge=15.0, le=65.0)
+    height_pct: float = Field(default=34.0, ge=15.0, le=65.0)
 
 
 class AnnotationSpec(BaseModel):
@@ -176,7 +199,21 @@ class PanelSpec(BaseModel):
     subtitle: str = ""
     dataset_ids: list[str] = Field(default_factory=list)
     series_styles: list[SeriesStyleSpec] = Field(default_factory=list)
-    plot_type: Literal["auto", "line", "scatter", "density2d", "bar", "hist", "matrix", "contour"] = "auto"
+    plot_type: Literal[
+        "auto",
+        "line",
+        "scatter",
+        "density2d",
+        "fel2d",
+        "violin",
+        "box",
+        "delta",
+        "convergence",
+        "bar",
+        "hist",
+        "matrix",
+        "contour",
+    ] = "auto"
 
     # Labels & limits
     x_label: str | None = None
@@ -187,6 +224,12 @@ class PanelSpec(BaseModel):
     y_max: float | None = None
     x_scale: Literal["linear", "log"] = "linear"
     y_scale: Literal["linear", "log"] = "linear"
+
+    # Dual Y-axis (Twin-Y)
+    y2_label: str | None = None
+    y2_min: float | None = None
+    y2_max: float | None = None
+    y2_unit: Literal["original", "nm", "A", "nm2", "A2", "kJ/mol", "kcal/mol"] = "original"
 
     # Unit conversions ("auto" / None means keep original)
     x_unit: Literal["original", "ps", "ns", "us", "nm", "A"] = "original"
@@ -212,6 +255,21 @@ class PanelSpec(BaseModel):
 
     equilibration_fraction: float = Field(default=0.0, ge=0.0, le=0.9)
     show_mean_line: bool = False
+
+    # 2D FEL from two .xvg files
+    fel_temp_k: float = Field(default=300.0, ge=10.0, le=2000.0)
+    fel_bins: int = Field(default=45, ge=10, le=200)
+    fel_unit: Literal["kJ/mol", "kcal/mol"] = "kJ/mol"
+    fel_mark_minima: bool = True
+
+    # System comparison stats (violin / box) & convergence
+    show_pvalues: bool = True
+    stat_test: Literal["mannwhitney", "welch"] = "mannwhitney"
+    convergence_blocks: int = Field(default=5, ge=2, le=20)
+
+    # Protein domain tracks & zoom inset
+    domain_tracks: list[DomainTrackSpec] = Field(default_factory=list)
+    zoom_inset: ZoomInsetSpec | None = None
 
     # Matrix (.xpm) specific options
     cmap: str = "RdYlBu_r"

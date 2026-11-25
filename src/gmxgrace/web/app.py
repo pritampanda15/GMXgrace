@@ -140,6 +140,15 @@ def stats_endpoint(req: StatsRequest) -> dict[str, Any]:
     return session.stats(req.dataset_ids, eq_fraction=req.eq_fraction)
 
 
+class FelMinimaRequest(BaseModel):
+    spec: FigureSpec
+
+
+@app.post("/api/fel_minima")
+def fel_minima_endpoint(req: FelMinimaRequest) -> dict[str, Any]:
+    return session.fel_minima(req.spec)
+
+
 # Serve static studio files both under /static and / so relative paths work identically
 # in local FastAPI and static GitHub Pages deployments.
 if STATIC_DIR.exists():

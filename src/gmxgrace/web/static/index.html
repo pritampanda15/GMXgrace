@@ -112,6 +112,7 @@
           <div class="canvas-meta">
             <span id="canvas-dims" class="meta-badge">Nature · 183 × 132 mm</span>
             <span id="render-indicator" class="render-badge">Ready</span>
+            <span id="hover-coords" class="coords-badge" title="Hover over any plot to read exact data coordinates; click to copy">Hover plot for (x, y)</span>
           </div>
           <div class="canvas-tools">
             <button class="tool-btn active" data-zoom="fit">Fit</button>
@@ -137,7 +138,8 @@
         <div class="bottom-drawer" id="bottom-drawer">
           <div class="drawer-tabs">
             <button class="drawer-tab active" data-drawer="reproduce">Reproduce (CLI &amp; Python)</button>
-            <button class="drawer-tab" data-drawer="stats">Summary Statistics</button>
+            <button class="drawer-tab" data-drawer="stats">Stats &amp; Convergence</button>
+            <button class="drawer-tab" data-drawer="fel">FEL Minima (trjconv)</button>
             <div class="drawer-spacer"></div>
             <button class="drawer-toggle" id="btn-toggle-drawer" title="Expand / collapse drawer">▾</button>
           </div>
@@ -179,9 +181,37 @@
                     <th>Mean ± SD</th>
                     <th>Median</th>
                     <th>Eq Mean ± SD</th>
+                    <th>Block SEM</th>
+                    <th>N_eff</th>
+                    <th>Convergence</th>
                   </tr>
                 </thead>
                 <tbody id="stats-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="drawer-body hidden" id="drawer-fel">
+            <div class="stats-toolbar">
+              <span>Energy basin minima mapped to nearest MD trajectory frame</span>
+              <span class="stats-hint">(Switch Plot Mode to "2D FEL (2 XVGs)" with 2 series loaded)</span>
+            </div>
+            <div class="stats-table-wrap">
+              <table class="stats-table">
+                <thead>
+                  <tr>
+                    <th>Basin</th>
+                    <th>CV1</th>
+                    <th>CV2</th>
+                    <th>ΔG</th>
+                    <th>Time</th>
+                    <th>Frame</th>
+                    <th>Extract Frame (GROMACS)</th>
+                  </tr>
+                </thead>
+                <tbody id="fel-tbody">
+                  <tr><td colspan="7" style="color:#64748b">Load the "FEL (2 XVGs)" demo or select Plot Mode → "2D FEL (2 XVGs)" to find energy minima.</td></tr>
+                </tbody>
               </table>
             </div>
           </div>
@@ -305,6 +335,11 @@
                   <option value="line">Line (XY)</option>
                   <option value="scatter">Scatter</option>
                   <option value="density2d">2D Density / Rama</option>
+                  <option value="fel2d">2D FEL (2 XVGs)</option>
+                  <option value="violin">Violin + p-val</option>
+                  <option value="box">Boxplot + p-val</option>
+                  <option value="delta">Δ-Difference (ΔRMSF)</option>
+                  <option value="convergence">Convergence (Blocks)</option>
                   <option value="bar">Bar</option>
                   <option value="hist">Distribution Hist</option>
                   <option value="matrix">2D Matrix (.xpm)</option>
@@ -358,6 +393,25 @@
             <div class="control-group">
               <label for="p-ylabel">Y-Axis Label</label>
               <input type="text" id="p-ylabel" placeholder="Auto from GROMACS metadata" />
+            </div>
+
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-y2label">Right Y Label (Twin-Y)</label>
+                <input type="text" id="p-y2label" placeholder="Optional right axis" />
+              </div>
+              <div class="control-group">
+                <label for="p-y2-unit">Right Y Unit</label>
+                <select id="p-y2-unit">
+                  <option value="original">Original</option>
+                  <option value="nm">nm</option>
+                  <option value="A">Å</option>
+                  <option value="nm2">nm²</option>
+                  <option value="A2">Å²</option>
+                  <option value="kJ/mol">kJ/mol</option>
+                  <option value="kcal/mol">kcal/mol</option>
+                </select>
+              </div>
             </div>
 
             <div class="control-row">
@@ -478,6 +532,91 @@
               <input type="checkbox" id="p-show-contours" checked />
               <span>Overlay contour isolines</span>
             </label>
+
+            <div class="divider"></div>
+            <div class="group-title">2D FEL from Two XVGs</div>
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-fel-temp">Temp (K)</label>
+                <input type="number" id="p-fel-temp" min="10" max="1500" value="300" />
+              </div>
+              <div class="control-group">
+                <label for="p-fel-bins">Bins</label>
+                <input type="number" id="p-fel-bins" min="15" max="120" value="45" />
+              </div>
+            </div>
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-fel-unit">Energy Unit</label>
+                <select id="p-fel-unit">
+                  <option value="kJ/mol">kJ/mol</option>
+                  <option value="kcal/mol">kcal/mol</option>
+                </select>
+              </div>
+              <div class="control-group checkbox-col">
+                <label class="toggle-row">
+                  <input type="checkbox" id="p-fel-minima" checked />
+                  <span>Mark Minima</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="group-title">System Comparison &amp; Convergence</div>
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-stat-test">Stat Test</label>
+                <select id="p-stat-test">
+                  <option value="mannwhitney">Mann-Whitney U</option>
+                  <option value="welch">Welch t-test</option>
+                </select>
+              </div>
+              <div class="control-group">
+                <label for="p-conv-blocks">Conv. Blocks</label>
+                <input type="number" id="p-conv-blocks" min="2" max="20" value="5" />
+              </div>
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" id="p-show-pvalues" checked />
+              <span>Show p-value significance brackets (Violin/Box)</span>
+            </label>
+
+            <div class="divider"></div>
+            <div class="group-title">Zoom Inset Box</div>
+            <label class="toggle-row">
+              <input type="checkbox" id="p-inset-enabled" />
+              <span>Enable magnified zoom inset</span>
+            </label>
+            <div class="control-row">
+              <div class="control-group">
+                <label for="p-inset-xmin">Inset X Min</label>
+                <input type="number" id="p-inset-xmin" step="any" placeholder="e.g. 0" />
+              </div>
+              <div class="control-group">
+                <label for="p-inset-xmax">Inset X Max</label>
+                <input type="number" id="p-inset-xmax" step="any" placeholder="e.g. 20" />
+              </div>
+            </div>
+            <div class="control-group">
+              <label for="p-inset-loc">Inset Position</label>
+              <select id="p-inset-loc">
+                <option value="lower right">Lower Right</option>
+                <option value="upper right">Upper Right</option>
+                <option value="upper left">Upper Left</option>
+                <option value="lower left">Lower Left</option>
+              </select>
+            </div>
+
+            <div class="divider"></div>
+            <div class="group-title">Protein Domain Track (RMSF / Residue)</div>
+            <div class="ann-builder">
+              <input type="number" id="dom-start" step="any" placeholder="Start res" />
+              <input type="number" id="dom-end" step="any" placeholder="End res" />
+              <input type="text" id="dom-label" placeholder="Domain name" />
+              <input type="color" id="dom-color" value="#3B82F6" style="height:28px;width:100%" />
+              <button class="btn btn-outline btn-sm" id="btn-add-dom">+ Add Domain</button>
+            </div>
+            <div id="dom-list" class="ann-list"></div>
 
             <div class="divider"></div>
             <div class="group-title">Annotations (Reference Lines / Shaded Regions)</div>

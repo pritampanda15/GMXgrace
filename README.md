@@ -30,8 +30,15 @@ One unified Matplotlib rendering engine powers both the command line and the bro
   - Replicate aggregation across independent trajectories (`mean_sd`, `mean_sem`, `median_iqr` shaded confidence bands).
   - Running averages & smoothing (`moving_avg`, `savgol`, `gaussian`) with optional faint raw trajectory overlay.
   - Marginal distribution histogram + KDE on the right y-axis.
+  - 2D Free Energy Landscape (FEL) builder directly from **any two `.xvg` files** (e.g., RMSD + $R_g$ or PC1 + PC2), computing $\Delta G(x,y) = -k_B T \ln P(x,y)$ at user-selected temperature and automatically identifying energy basin minima (`M1`, `M2`, `M3`) with ready-to-paste **`gmx trjconv -dump`** commands.
+  - Trajectory convergence & Flyvbjerg–Petersen block averaging (`Block SEM`, drift, FFT autocorrelation $\tau_c$, $N_{\text{eff}}$, and `Converged / Mild Drift / Drifting` badges).
+  - System comparison mode (`violin` raincloud / `box`) with automatic pairwise Mann–Whitney *U* or Welch *t*-test significance brackets (`*`, `**`, `***`, `****`, `ns`).
+  - $\Delta\text{RMSF}$ difference plots (crimson/navy positive/negative fills) + colored **protein domain tracks** along the top axis.
+  - **Zoom inset boxes** with publication connector lines & **Dual Y-Axis (Twin-Y)** overlays.
   - 2D KDE contour + scatter mode (`density2d`) for Ramachandran (`gmx rama`) and PCA 2D projections (`gmx anaeig -2d`).
-  - Summary statistics (full and post-equilibration Mean ± SD, Min, Max, Median) with 1-click CSV export for manuscript Supplementary Tables.
+  - Interactive **hover/click coordinate & frame inspector** on the live SVG canvas.
+  - Summary statistics + convergence table with 1-click CSV export for manuscript Supplementary Tables.
+  - **Batch CLI mode** (`gmxgrace batch ./analysis_dir/`) to auto-plot an entire GROMACS folder + combined multi-panel summary sheet & stats CSV.
 - **Online Web Studio + Full Reproducibility**
   - Drag-and-drop browser studio with 6 built-in GROMACS demo showcases, multi-panel layout designer (`1×1`, `1×2`, `2×2`, `2×3`), live SVG preview, per-series styling, annotations, and 1-click vector/raster exports.
   - Live **Reproduce (CLI & Python)** pane generating the exact `gmxgrace` CLI command, standalone Python script, and portable `figure_recipe.json` (both downloadable and re-importable!).
@@ -97,6 +104,18 @@ gmxgrace matrix examples/dssp.xpm --no-contours --journal biophysj -o dssp.tiff 
 
 # Ramachandran 2D KDE Density (gmx rama)
 gmxgrace plot examples/rama.xvg --plot-type density2d --cmap Blues --journal nature -o rama.pdf
+
+# 2D Gibbs Free Energy Landscape from ANY two .xvg files + minima trjconv -dump commands
+gmxgrace fel examples/rmsd_rep1.xvg examples/gyrate.xvg --temp 300 --x-unit ns --y-unit A --journal nature -o fel_rmsd_rg.pdf
+
+# Equilibrated system comparison (Violin + Mann-Whitney U significance brackets)
+gmxgrace plot examples/systems_rmsd.xvg --plot-type violin --y-unit A --eq 0.2 --journal nature -o systems_violin.pdf
+
+# Delta-RMSF difference plot (Mutant - Wild-Type)
+gmxgrace plot examples/rmsf_wt_vs_mut.xvg --plot-type delta --y-unit A --journal nature -o delta_rmsf.pdf
+
+# Batch-plot an entire GROMACS output folder + combined summary sheet & convergence CSV
+gmxgrace batch examples/ --out-dir batch_figures --journal nature --x-unit ns --y-unit A --eq 0.2
 ```
 
 ### 5. Inspect Metadata & Equilibrated Statistics

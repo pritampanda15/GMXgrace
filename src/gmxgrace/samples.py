@@ -326,6 +326,24 @@ def generate_rama_xvg() -> str:
     return "\n".join(lines) + "\n"
 
 
+def generate_system_comparison_xvg() -> str:
+    """Generate 3 equilibrated MD conditions (Apo vs Inhibitor A vs Inhibitor B) for violin/box stats."""
+    rng = np.random.default_rng(512)
+    t_ns = np.linspace(0.0, 100.0, 401)
+    apo = 0.28 + 0.038 * np.sin(t_ns / 14.0) + rng.normal(0.0, 0.028, len(t_ns))
+    inh_a = 0.19 + 0.018 * np.cos(t_ns / 17.0) + rng.normal(0.0, 0.019, len(t_ns))
+    inh_b = 0.15 + 0.014 * np.sin(t_ns / 21.0) + rng.normal(0.0, 0.016, len(t_ns))
+    return _format_xvg(
+        title="Ligand-Induced Backbone Stabilization",
+        subtitle="Apo vs Holo MD trajectories",
+        xlabel="Time (ns)",
+        ylabel="Backbone RMSD (nm)",
+        command="gmx rms -s md.tpr -f md.xtc -o systems_rmsd.xvg",
+        columns=[t_ns, np.clip(apo, 0.05, None), np.clip(inh_a, 0.05, None), np.clip(inh_b, 0.05, None)],
+        legends=["Apo", "Inhibitor A", "Inhibitor B"],
+    )
+
+
 def get_sample_files() -> dict[str, str]:
     """Return all realistic sample GROMACS files keyed by filename."""
     return {
@@ -338,6 +356,7 @@ def get_sample_files() -> dict[str, str]:
         "pmf_profile.xvg": generate_pmf_xvg(),
         "wham_histo.xvg": generate_wham_histo_xvg(),
         "rama.xvg": generate_rama_xvg(),
+        "systems_rmsd.xvg": generate_system_comparison_xvg(),
         "gibbs_fel.xpm": generate_fel_xpm(),
         "dssp.xpm": generate_dssp_xpm(),
     }
@@ -385,5 +404,20 @@ SAMPLE_BUNDLES: list[dict[str, Any]] = [
         "id": "rama-2d",
         "name": "Ramachandran",
         "description": "GROMACS gmx rama phi/psi 2D KDE contour + scatter plot with alpha/beta basin density",
+    },
+    {
+        "id": "fel-from-xvg",
+        "name": "FEL (2 XVGs)",
+        "description": "Compute 2D Gibbs Free Energy Landscape from RMSD + Rg .xvg files with M1/M2 minima and trjconv -dump timestamps",
+    },
+    {
+        "id": "compare-systems",
+        "name": "Violin + p-val",
+        "description": "Equilibrated Apo vs Inhibitor A vs Inhibitor B comparison with Mann-Whitney U significance brackets",
+    },
+    {
+        "id": "delta-rmsf",
+        "name": "ΔRMSF + Domains",
+        "description": "Mutant − Wild-Type ΔRMSF difference plot with colored protein domain track along the top",
     },
 ]

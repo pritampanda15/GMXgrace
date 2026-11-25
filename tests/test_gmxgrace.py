@@ -281,5 +281,91 @@ def test_heavy_file_vectorized_parse_and_minmax_downsampling() -> None:
     )
     svg = render_figure_bytes(spec, {"heavy": ds}, fmt="svg")
     assert b"<svg" in svg
+    assert b"gmxgrace-axes-meta" in svg
     assert len(svg) < 1_500_000  # lightweight publication SVG even for 200k raw frames
+
+
+def test_v02_biophysics_modes_and_cli_fel_batch(tmp_path: Path) -> None:
+    """Test FEL from 2 XVGs, convergence, violin/box p-values, delta-RMSF + domains, Twin-Y, zoom inset, and CLI fel/batch."""
+    from gmxgrace.models import DomainTrackSpec, SeriesStyleSpec, ZoomInsetSpec
+
+    client = TestClient(app)
+
+    # 1. FEL from 2 XVGs showcase + /api/fel_minima endpoint
+    fel_b = client.post("/api/samples/fel-from-xvg")
+    assert fel_b.status_code == 200
+    fel_spec = fel_b.json()["spec"]
+    fel_svg = client.post("/api/render", json={"spec": fel_spec, "fmt": "svg"})
+    assert fel_svg.status_code == 200 and "<svg" in fel_svg.text
+    minima_resp = client.post("/api/fel_minima", json={"spec": fel_spec})
+    assert minima_resp.status_code == 200
+    fel_panels = minima_resp.json()["fel_panels"]
+    assert len(fel_panels) == 1 and len(fel_panels[0]["minima"]) >= 1
+    assert "gmx trjconv" in fel_panels[0]["minima"][0]["trjconv_cmd"]
+
+    # 2. System comparison Violin + p-values showcase (and boxplot)
+    cmp_b = client.post("/api/samples/compare-systems")
+    assert cmp_b.status_code == 200
+    cmp_spec = cmp_b.json()["spec"]
+    assert client.post("/api/render", json={"spec": cmp_spec, "fmt": "svg"}).status_code == 200
+    cmp_spec["panels"][0]["plot_type"] = "box"
+    cmp_spec["panels"][0]["stat_test"] = "welch"
+    assert client.post("/api/render", json={"spec": cmp_spec, "fmt": "svg"}).status_code == 200
+
+    # 3. Delta-RMSF + Protein Domain Tracks showcase
+    dr_b = client.post("/api/samples/delta-rmsf")
+    assert dr_b.status_code == 200
+    dr_svg = client.post("/api/render", json={"spec": dr_b.json()["spec"], "fmt": "svg"})
+    assert dr_svg.status_code == 200 and "<svg" in dr_svg.text
+
+    # 4. Convergence mode + stats convergence columns
+    rmsd_b = client.post("/api/samples/rmsd-replicates")
+    assert rmsd_b.status_code == 200
+    r_spec = rmsd_b.json()["spec"]
+    r_ids = [d["id"] for d in rmsd_b.json()["datasets"]]
+    st = client.post("/api/stats", json={"dataset_ids": r_ids, "eq_fraction": 0.2}).json()["stats"]
+    assert st and "convergence_status" in st[0] and "block_sem" in st[0] and "n_eff" in st[0]
+    r_spec["panels"][0]["plot_type"] = "convergence"
+    r_spec["panels"][0]["aggregate"] = "none"
+    assert client.post("/api/render", json={"spec": r_spec, "fmt": "svg"}).status_code == 200
+
+    # 5. Twin-Y + Zoom Inset + Domain Track direct engine check
+    samples = get_sample_files()
+    ds_rmsd = parse_bytes(samples["rmsd_rep1.xvg"].encode(), "rmsd_rep1.xvg")
+    ds_rg = parse_bytes(samples["gyrate.xvg"].encode(), "gyrate.xvg")
+    twin_spec = FigureSpec(
+        journal="acs",
+        panels=[
+            PanelSpec(
+                id="p1",
+                dataset_ids=["rmsd", "rg"],
+                x_unit="ns",
+                y_unit="A",
+                y2_unit="A",
+                y2_label="Rg (Å)",
+                series_styles=[
+                    SeriesStyleSpec(dataset_id="rmsd", series_index=0, y_axis="left"),
+                    SeriesStyleSpec(dataset_id="rg", series_index=0, y_axis="right"),
+                ],
+                zoom_inset=ZoomInsetSpec(enabled=True, x_min=0.0, x_max=20.0, loc="lower right"),
+                domain_tracks=[DomainTrackSpec(start=0, end=20, label="Eq", color="#64748B")],
+            )
+        ],
+    )
+    twin_svg = render_figure_bytes(twin_spec, {"rmsd": ds_rmsd, "rg": ds_rg}, fmt="svg")
+    assert b"<svg" in twin_svg and b"gmxgrace-axes-meta" in twin_svg
+
+    # 6. CLI `gmxgrace fel` & `gmxgrace batch`
+    demo_dir = tmp_path / "demo_in"
+    assert cli_main(["demo", "--out-dir", str(demo_dir)]) == 0
+    fel_pdf = tmp_path / "cli_fel.pdf"
+    assert cli_main(["fel", str(demo_dir / "rmsd_rep1.xvg"), str(demo_dir / "gyrate.xvg"), "--x-unit", "ns", "--y-unit", "A", "-o", str(fel_pdf)]) == 0
+    assert fel_pdf.exists() and fel_pdf.stat().st_size > 1000
+
+    batch_out = tmp_path / "batch_out"
+    assert cli_main(["batch", str(demo_dir), "--out-dir", str(batch_out), "--fmt", "svg", "--eq", "0.2"]) == 0
+    assert (batch_out / "summary_sheet.svg").exists()
+    assert (batch_out / "summary_statistics.csv").exists()
+    assert (batch_out / "rmsd_rep1.svg").exists()
+
 

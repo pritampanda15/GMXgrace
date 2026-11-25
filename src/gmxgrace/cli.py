@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -11,14 +13,15 @@ from rich.console import Console
 from rich.table import Table
 
 from gmxgrace import __version__
-from gmxgrace.models import AnnotationSpec, FigureSpec, PanelSpec, ParsedDataset
-from gmxgrace.parsers import parse_file
+from gmxgrace.analysis import compute_convergence, compute_fel_from_series, unit_scale
+from gmxgrace.models import AnnotationSpec, FigureSpec, PanelSpec, ParsedDataset, SeriesData, ZoomInsetSpec
+from gmxgrace.parsers import SUPPORTED_EXTENSIONS, parse_file
 from gmxgrace.plotting import save_figure
 from gmxgrace.styles import JOURNAL_PRESETS, PALETTES
 
 console = Console()
 
-_SUBCOMMANDS = {"plot", "matrix", "inspect", "render", "serve", "presets", "demo"}
+_SUBCOMMANDS = {"plot", "matrix", "fel", "batch", "inspect", "render", "serve", "presets", "demo"}
 
 
 def _parse_range(raw: str | None) -> tuple[float | None, float | None]:
@@ -94,6 +97,11 @@ def _cmd_plot(args: argparse.Namespace) -> int:
 
     x_min, x_max = _parse_range(args.xlim)
     y_min, y_max = _parse_range(args.ylim)
+    inset_spec = None
+    if getattr(args, "inset", None):
+        ix0, ix1 = _parse_range(args.inset)
+        if ix0 is not None and ix1 is not None:
+            inset_spec = ZoomInsetSpec(enabled=True, x_min=ix0, x_max=ix1)
     annotations = [AnnotationSpec(kind="hline", value=v) for v in args.hline] + [
         AnnotationSpec(kind="vline", value=v) for v in args.vline
     ]
@@ -156,6 +164,7 @@ def _cmd_plot(args: argparse.Namespace) -> int:
                 legend_loc=args.legend_loc,
                 legend_frame=args.legend_frame,
                 annotations=annotations,
+                zoom_inset=inset_spec,
                 cmap=args.cmap,
                 show_contours=not args.no_contours,
                 contour_levels=args.contours,
@@ -205,34 +214,213 @@ def _cmd_plot(args: argparse.Namespace) -> int:
 
 
 def _print_stats_table(datasets: dict[str, ParsedDataset], eq_fraction: float = 0.0) -> None:
-    table = Table(title=f"GROMACS Series Summary Statistics (eq skip: {int(eq_fraction * 100)}%)")
+    table = Table(title=f"GROMACS Series Summary & Convergence (eq skip: {int(eq_fraction * 100)}%)")
     table.add_column("File", style="cyan")
     table.add_column("Series", style="bold")
     table.add_column("N", justify="right")
-    table.add_column("Min", justify="right")
-    table.add_column("Max", justify="right")
     table.add_column("Mean ± SD", justify="right", style="green")
     table.add_column("Median", justify="right")
     if eq_fraction > 0:
         table.add_column("Eq Mean ± SD", justify="right", style="yellow")
+    table.add_column("Block SEM", justify="right")
+    table.add_column("N_eff", justify="right")
+    table.add_column("Convergence", justify="center")
 
     for ds in datasets.values():
         if ds.kind == "xy":
             for s in ds.series:
                 st = s.summary_stats(eq_fraction=eq_fraction)
+                conv = compute_convergence(s.x, s.y, eq_fraction=eq_fraction)
+                status_style = "green" if conv.status == "Converged" else ("yellow" if conv.status == "Mild Drift" else "red")
                 row = [
                     ds.filename,
                     s.name,
                     str(st["count"]),
-                    f"{st['min']:.4g}",
-                    f"{st['max']:.4g}",
                     f"{st['mean']:.4g} ± {st['std']:.3g}",
                     f"{st['median']:.4g}",
                 ]
                 if eq_fraction > 0:
                     row.append(f"{st['eq_mean']:.4g} ± {st['eq_std']:.3g}")
+                row.extend(
+                    [
+                        f"{conv.block_sem:.3g}",
+                        f"{conv.n_eff:.0f}",
+                        f"[{status_style}]{conv.status}[/{status_style}]",
+                    ]
+                )
                 table.add_row(*row)
     console.print(table)
+
+
+def _cmd_fel(args: argparse.Namespace) -> int:
+    """Compute & plot 2D Gibbs Free Energy Landscape from two .xvg collective variables + minima."""
+    ds_x = parse_file(args.cv1)
+    ds_y = parse_file(args.cv2)
+    if not ds_x.series or not ds_y.series:
+        raise ValueError("Both input files must contain at least one XY series.")
+
+    datasets = {"cv1": ds_x, "cv2": ds_y}
+    panel = PanelSpec(
+        id="panel-1",
+        title=args.title or f"Free Energy Landscape ({Path(args.cv1).stem} vs {Path(args.cv2).stem})",
+        dataset_ids=["cv1", "cv2"],
+        plot_type="fel2d",
+        x_label=args.xlabel,
+        y_label=args.ylabel,
+        x_unit=args.x_unit,
+        y_unit=args.y_unit,
+        equilibration_fraction=args.eq,
+        fel_temp_k=args.temp,
+        fel_bins=args.bins,
+        fel_unit=args.fel_unit,
+        fel_mark_minima=not args.no_minima,
+        cmap=args.cmap,
+        show_contours=not args.no_contours,
+        contour_levels=args.contours,
+        colorbar_label=args.cbar_label,
+    )
+    spec = FigureSpec(
+        journal=args.journal,
+        column_width=args.width,
+        aspect_ratio=args.aspect,
+        dpi=args.dpi,
+        transparent=args.transparent,
+        panels=[panel],
+    )
+    out_path = Path(args.output) if args.output else Path("fel_2d.pdf")
+    saved = save_figure(spec, datasets, out_path)
+    console.print(f"[bold green]Saved 2D FEL figure:[/bold green] {saved}")
+
+    # Compute & print minima + gmx trjconv -dump commands
+    xs = unit_scale(ds_x.x_unit, args.x_unit)
+    ys1 = unit_scale(ds_x.y_unit, args.y_unit)
+    ys2 = unit_scale(ds_y.y_unit, args.y_unit)
+    tu = args.x_unit if args.x_unit != "original" else ds_x.x_unit
+    fel = compute_fel_from_series(
+        SeriesData(name=ds_x.series[0].name, x=ds_x.series[0].x * xs, y=ds_x.series[0].y * ys1),
+        SeriesData(name=ds_y.series[0].name, x=ds_y.series[0].x * xs, y=ds_y.series[0].y * ys2),
+        temp_k=args.temp,
+        bins=args.bins,
+        unit=args.fel_unit,
+        eq_fraction=args.eq,
+        time_unit=tu,
+    )
+    t = Table(title=f"Energy Basin Minima (T = {args.temp} K)")
+    t.add_column("Basin", style="bold cyan")
+    t.add_column("CV1", justify="right")
+    t.add_column("CV2", justify="right")
+    t.add_column(f"ΔG ({args.fel_unit})", justify="right", style="green")
+    t.add_column(f"Time ({tu or 'ps'})", justify="right")
+    t.add_column("Extract Structure Command", style="dim")
+    for m in fel.minima:
+        t.add_row(f"M{m.rank}", f"{m.x:.4g}", f"{m.y:.4g}", f"{m.dg:.3f}", f"{m.time:.3f}", m.trjconv_cmd)
+    console.print(t)
+    return 0
+
+
+def _cmd_batch(args: argparse.Namespace) -> int:
+    """Batch-plot an entire directory of GROMACS outputs + combined summary sheet & stats CSV."""
+    in_dir = Path(args.input_dir)
+    if not in_dir.is_dir():
+        raise FileNotFoundError(f"Input directory not found: {in_dir}")
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    files = sorted(p for p in in_dir.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS)
+    if not files:
+        console.print(f"[yellow]No supported GROMACS files found in {in_dir}[/yellow]")
+        return 1
+
+    datasets: dict[str, ParsedDataset] = {}
+    stats_rows: list[dict[str, object]] = []
+
+    for idx, fp in enumerate(files):
+        try:
+            ds = parse_file(fp)
+        except Exception as exc:
+            console.print(f"[red]Skipped {fp.name}:[/red] {exc}")
+            continue
+        ds_id = f"ds_{idx}"
+        datasets[ds_id] = ds
+
+        # Individual publication figure
+        panel = PanelSpec(
+            id="panel-1",
+            title=ds.title or fp.stem,
+            dataset_ids=[ds_id],
+            x_unit=args.x_unit,
+            y_unit=args.y_unit,
+            equilibration_fraction=args.eq,
+            marginal_hist=(ds.kind == "xy" and ds.detected_type in {"rmsd", "gyrate", "sasa"}),
+        )
+        single_spec = FigureSpec(
+            journal=args.journal,
+            column_width="single",
+            dpi=args.dpi,
+            panels=[panel],
+        )
+        indiv_out = out_dir / f"{fp.stem}.{args.fmt}"
+        save_figure(single_spec, {ds_id: ds}, indiv_out)
+
+        if ds.kind == "xy":
+            for s in ds.series:
+                st = s.summary_stats(eq_fraction=args.eq)
+                conv = compute_convergence(s.x, s.y, eq_fraction=args.eq)
+                stats_rows.append(
+                    {
+                        "filename": ds.filename,
+                        "series": s.name,
+                        "count": st["count"],
+                        "min": st["min"],
+                        "max": st["max"],
+                        "mean": st["mean"],
+                        "std": st["std"],
+                        "median": st["median"],
+                        "eq_mean": st["eq_mean"],
+                        "eq_std": st["eq_std"],
+                        **conv.to_summary_dict(),
+                    }
+                )
+
+    # Combined multi-panel summary sheet (up to 12 panels)
+    sheet_ids = list(datasets.keys())[:12]
+    if sheet_ids:
+        ncols = 2 if len(sheet_ids) <= 6 else 3
+        nrows = max(1, math.ceil(len(sheet_ids) / ncols))
+        sheet_panels = [
+            PanelSpec(
+                id=f"panel-{i + 1}",
+                title=datasets[did].title or Path(datasets[did].filename).stem,
+                dataset_ids=[did],
+                x_unit=args.x_unit,
+                y_unit=args.y_unit,
+                equilibration_fraction=args.eq,
+            )
+            for i, did in enumerate(sheet_ids)
+        ]
+        sheet_spec = FigureSpec(
+            journal=args.journal,
+            column_width="double",
+            nrows=nrows,
+            ncols=ncols,
+            dpi=args.dpi,
+            panels=sheet_panels,
+        )
+        sheet_out = out_dir / f"summary_sheet.{args.fmt}"
+        save_figure(sheet_spec, datasets, sheet_out)
+        console.print(f"[bold green]Saved batch summary sheet:[/bold green] {sheet_out}")
+
+    # Combined statistics + convergence CSV
+    if stats_rows:
+        csv_path = out_dir / "summary_statistics.csv"
+        with csv_path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=list(stats_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(stats_rows)
+        console.print(f"[bold cyan]Saved combined statistics CSV:[/bold cyan] {csv_path}")
+
+    console.print(f"[bold green]Batch complete:[/bold green] {len(datasets)} figures written to {out_dir}")
+    return 0
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
@@ -341,8 +529,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_plot.add_argument(
         "--plot-type",
         default="auto",
-        choices=["auto", "line", "scatter", "density2d", "bar", "hist", "matrix", "contour"],
+        choices=[
+            "auto",
+            "line",
+            "scatter",
+            "density2d",
+            "fel2d",
+            "violin",
+            "box",
+            "delta",
+            "convergence",
+            "bar",
+            "hist",
+            "matrix",
+            "contour",
+        ],
     )
+    p_plot.add_argument("--inset", default=None, help="Zoom inset X range MIN:MAX (e.g. 0:20)")
     p_plot.add_argument("--smooth", default="none", choices=["none", "moving_avg", "savgol", "gaussian"])
     p_plot.add_argument("--window", type=int, default=25, help="Smoothing window size (default: 25)")
     p_plot.add_argument("--hide-raw", action="store_true", help="Hide raw trace beneath smoothed curve")
@@ -437,6 +640,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_demo = sub.add_parser("demo", help="Generate realistic GROMACS sample .xvg/.xpm files for testing")
     p_demo.add_argument("--out-dir", default="gmxgrace_demo", help="Target directory for sample files")
     p_demo.set_defaults(func=_cmd_demo)
+
+    # fel subcommand (2D FEL from any two .xvg files + minima trjconv commands)
+    p_fel = sub.add_parser("fel", help="Compute 2D Gibbs Free Energy Landscape from two .xvg files + minima timestamps")
+    p_fel.add_argument("cv1", help="First collective variable .xvg (e.g. rmsd.xvg or pc1.xvg)")
+    p_fel.add_argument("cv2", help="Second collective variable .xvg (e.g. gyrate.xvg or pc2.xvg)")
+    p_fel.add_argument("--temp", type=float, default=300.0, help="Temperature in Kelvin (default: 300)")
+    p_fel.add_argument("--bins", type=int, default=45, help="2D histogram bins (default: 45)")
+    p_fel.add_argument("--fel-unit", default="kJ/mol", choices=["kJ/mol", "kcal/mol"])
+    p_fel.add_argument("--eq", type=float, default=0.0, help="Equilibration fraction to skip (0-0.9)")
+    p_fel.add_argument("--cmap", default="RdYlBu_r")
+    p_fel.add_argument("--contours", type=int, default=10)
+    p_fel.add_argument("--no-contours", action="store_true")
+    p_fel.add_argument("--no-minima", action="store_true", help="Do not mark M1/M2/M3 basins on plot")
+    p_fel.add_argument("--cbar-label", default=None)
+    _add_common_style_args(p_fel)
+    p_fel.set_defaults(func=_cmd_fel)
+
+    # batch subcommand (auto-plot an entire GROMACS analysis folder)
+    p_batch = sub.add_parser("batch", help="Batch-plot all GROMACS files in a directory + summary sheet & stats CSV")
+    p_batch.add_argument("input_dir", help="Directory containing .xvg/.xpm/.edr/.csv files")
+    p_batch.add_argument("--out-dir", default="gmxgrace_batch_out", help="Output directory")
+    p_batch.add_argument("--fmt", default="pdf", choices=["pdf", "svg", "eps", "png", "tiff"])
+    p_batch.add_argument("--journal", "-j", default="nature", choices=list(JOURNAL_PRESETS.keys()))
+    p_batch.add_argument("--x-unit", default="original", choices=["original", "ps", "ns", "us", "nm", "A"])
+    p_batch.add_argument("--y-unit", default="original", choices=["original", "nm", "A", "nm2", "A2", "kJ/mol", "kcal/mol"])
+    p_batch.add_argument("--eq", type=float, default=0.0, help="Equilibration fraction to skip (0-0.9)")
+    p_batch.add_argument("--dpi", type=int, default=300)
+    p_batch.set_defaults(func=_cmd_batch)
 
     return parser
 

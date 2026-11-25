@@ -6,8 +6,17 @@ import uuid
 from collections import OrderedDict
 from typing import Any
 
+from gmxgrace.analysis import compute_convergence, compute_fel_from_series, unit_scale
 from gmxgrace.codegen import generate_cli_command, generate_python_script, generate_recipe_dict
-from gmxgrace.models import AnnotationSpec, FigureSpec, PanelSpec, ParsedDataset
+from gmxgrace.models import (
+    AnnotationSpec,
+    DomainTrackSpec,
+    FigureSpec,
+    PanelSpec,
+    ParsedDataset,
+    SeriesData,
+    ZoomInsetSpec,
+)
 from gmxgrace.parsers import parse_bytes
 from gmxgrace.plotting import render_figure_bytes
 from gmxgrace.samples import SAMPLE_BUNDLES, get_sample_files
@@ -191,6 +200,14 @@ class StudioSession:
                                 alpha=0.4,
                             )
                         ],
+                        zoom_inset=ZoomInsetSpec(
+                            enabled=True,
+                            x_min=0.0,
+                            x_max=20.0,
+                            loc="lower right",
+                            width_pct=36.0,
+                            height_pct=34.0,
+                        ),
                     )
                 ],
             )
@@ -291,6 +308,81 @@ class StudioSession:
                     )
                 ],
             )
+        elif bundle_id == "fel-from-xvg":
+            rmsd_id, s_rmsd = _add("rmsd_rep1.xvg")
+            rg_id, s_rg = _add("gyrate.xvg")
+            loaded_summaries = [s_rmsd, s_rg]
+            spec = FigureSpec(
+                journal="nature",
+                column_width="one_half",
+                aspect_ratio=0.82,
+                nrows=1,
+                ncols=1,
+                panels=[
+                    PanelSpec(
+                        id="panel-1",
+                        title="2D Free Energy Landscape (RMSD vs Rg)",
+                        dataset_ids=[rmsd_id, rg_id],
+                        plot_type="fel2d",
+                        x_unit="ns",
+                        y_unit="A",
+                        fel_temp_k=300.0,
+                        fel_bins=40,
+                        fel_unit="kJ/mol",
+                        fel_mark_minima=True,
+                        cmap="RdYlBu_r",
+                        show_contours=True,
+                        contour_levels=10,
+                    )
+                ],
+            )
+        elif bundle_id == "compare-systems":
+            sys_id, s_sys = _add("systems_rmsd.xvg")
+            loaded_summaries = [s_sys]
+            spec = FigureSpec(
+                journal="nature",
+                column_width="one_half",
+                aspect_ratio=0.72,
+                palette="nature-npg",
+                nrows=1,
+                ncols=1,
+                panels=[
+                    PanelSpec(
+                        id="panel-1",
+                        title="Equilibrated Backbone RMSD Comparison",
+                        dataset_ids=[sys_id],
+                        plot_type="violin",
+                        y_unit="A",
+                        equilibration_fraction=0.2,
+                        show_pvalues=True,
+                        stat_test="mannwhitney",
+                    )
+                ],
+            )
+        elif bundle_id == "delta-rmsf":
+            rmsf_id, s_rmsf = _add("rmsf_wt_vs_mut.xvg")
+            loaded_summaries = [s_rmsf]
+            spec = FigureSpec(
+                journal="nature",
+                column_width="one_half",
+                aspect_ratio=0.62,
+                nrows=1,
+                ncols=1,
+                panels=[
+                    PanelSpec(
+                        id="panel-1",
+                        title="Mutation-Induced Flexibility Change (G46A − WT)",
+                        dataset_ids=[rmsf_id],
+                        plot_type="delta",
+                        y_unit="A",
+                        domain_tracks=[
+                            DomainTrackSpec(start=1, end=38, label="NTD", color="#3B82F6"),
+                            DomainTrackSpec(start=39, end=56, label="Loop", color="#E64B35"),
+                            DomainTrackSpec(start=57, end=150, label="Catalytic Domain", color="#00A087"),
+                        ],
+                    )
+                ],
+            )
         else:
             raise KeyError(f"Unknown sample bundle: {bundle_id}")
 
@@ -317,8 +409,73 @@ class StudioSession:
                 continue
             for s in ds.series:
                 st = s.summary_stats(eq_fraction=eq_fraction)
+                conv = compute_convergence(s.x, s.y, eq_fraction=eq_fraction)
+                st.update(conv.to_summary_dict())
                 st["dataset_id"] = ds_id
                 st["filename"] = ds.filename
                 st["series_index"] = s.series_index
                 rows.append(st)
         return {"stats": rows}
+
+    def fel_minima(self, spec: FigureSpec | dict[str, Any]) -> dict[str, Any]:
+        """Extract energy minima & gmx trjconv -dump commands for any fel2d panel in spec."""
+        fig_spec = spec if isinstance(spec, FigureSpec) else FigureSpec.model_validate(spec)
+        panels_out: list[dict[str, Any]] = []
+        all_ds = self.store.all_map()
+
+        for panel in fig_spec.panels:
+            if panel.plot_type != "fel2d":
+                continue
+            style_lookup = {(st.dataset_id, st.series_index): st for st in panel.series_styles}
+            active: list[tuple[SeriesData, ParsedDataset]] = []
+            for did in panel.dataset_ids:
+                ds = all_ds.get(did)
+                if ds is None or ds.kind != "xy":
+                    continue
+                for s in ds.series:
+                    st = style_lookup.get((did, s.series_index))
+                    if st is not None and not st.visible:
+                        continue
+                    xs = unit_scale(ds.x_unit, panel.x_unit)
+                    ys = unit_scale(ds.y_unit, panel.y_unit)
+                    active.append(
+                        (
+                            SeriesData(
+                                name=(st.label if st and st.label else s.name),
+                                x=s.x * xs,
+                                y=s.y * ys,
+                                source_file=s.source_file,
+                                series_index=s.series_index,
+                            ),
+                            ds,
+                        )
+                    )
+            if len(active) < 2:
+                continue
+            try:
+                tu = panel.x_unit if panel.x_unit != "original" else active[0][1].x_unit
+                fel = compute_fel_from_series(
+                    active[0][0],
+                    active[1][0],
+                    temp_k=panel.fel_temp_k,
+                    bins=panel.fel_bins,
+                    unit=panel.fel_unit,
+                    eq_fraction=panel.equilibration_fraction,
+                    time_unit=tu,
+                )
+                panels_out.append(
+                    {
+                        "panel_id": panel.id,
+                        "title": panel.title or panel.id,
+                        "unit": fel.unit,
+                        "temp_k": fel.temp_k,
+                        "x_name": active[0][0].name,
+                        "y_name": active[1][0].name,
+                        "time_unit": tu or "ps",
+                        "minima": [m.to_dict() for m in fel.minima],
+                    }
+                )
+            except Exception:
+                continue
+
+        return {"fel_panels": panels_out}
