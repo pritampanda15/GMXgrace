@@ -709,6 +709,64 @@ html, body {
   height: auto;
 }
 
+.svg-preview svg [id^="gmx_edit__"] {
+  cursor: text;
+}
+
+.svg-preview svg [id^="gmx_edit__"]:hover text {
+  fill: #1d4ed8 !important;
+  text-decoration: underline;
+}
+
+/* Floating Inline SVG Label Editor */
+.inline-editor {
+  position: fixed;
+  z-index: 950;
+  background: var(--surface);
+  border: 1.5px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.22);
+  padding: 8px 10px;
+  min-width: 260px;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inline-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inline-editor-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.inline-editor-hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.inline-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.inline-editor-row input {
+  flex: 1;
+}
+
 .paper-sheet.zoom-fit .svg-preview svg {
   max-height: calc(100vh - 330px);
   width: auto;

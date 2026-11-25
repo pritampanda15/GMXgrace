@@ -961,9 +961,13 @@
 
     svg.style.cursor = "crosshair";
     svg.addEventListener("mousemove", (e) => {
+      if (e.target.closest && e.target.closest('[id^="gmx_edit__"]')) {
+        readout.textContent = "Click to edit label inline";
+        return;
+      }
       const hit = mapPoint(e);
       if (!hit) {
-        readout.textContent = "Hover plot for (x, y)";
+        readout.textContent = "Click any label to edit · Hover for (x, y)";
         return;
       }
       const xStr = Number.isFinite(hit.xVal) ? hit.xVal.toPrecision(4) : "—";
@@ -972,12 +976,32 @@
     });
 
     svg.addEventListener("mouseleave", () => {
-      readout.textContent = "Hover plot for (x, y)";
+      readout.textContent = "Click any label to edit · Hover for (x, y)";
+    });
+
+    // Click-to-edit any tagged Title, X/Y/Right-Y/Colorbar label, Legend item, or Suptitle!
+    svg.querySelectorAll('[id^="gmx_edit__"]').forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openInlineEditor(el);
+      });
     });
 
     svg.addEventListener("click", async (e) => {
+      if (e.target.closest && e.target.closest('[id^="gmx_edit__"]')) return;
       const hit = mapPoint(e);
       if (!hit) return;
+
+      // Auto-select clicked panel in multi-panel layouts
+      const mIdx = /^gmx_ax_(\d+)$/.exec(hit.meta.gid || "");
+      if (mIdx) {
+        const pIdx = Number(mIdx[1]);
+        if (Number.isFinite(pIdx) && pIdx < state.spec.panels.length && pIdx !== state.activePanelIdx) {
+          state.activePanelIdx = pIdx;
+          syncAllControls();
+        }
+      }
+
       const xStr = hit.xVal.toFixed(3);
       const yStr = hit.yVal.toFixed(3);
       const xl = (hit.meta.xlabel || "").toLowerCase();
@@ -995,6 +1019,142 @@
       }
       showToast(msg);
     });
+  }
+
+  let activeInlineCommit = null;
+
+  function closeInlineEditor() {
+    const box = $("inline-editor");
+    if (box) box.classList.add("hidden");
+    activeInlineCommit = null;
+  }
+
+  function findNthVisibleSeries(panel, targetIdx) {
+    let seen = 0;
+    for (const did of panel.dataset_ids || []) {
+      const ds = state.datasets[did];
+      if (!ds || ds.kind !== "xy") continue;
+      for (const s of ds.series || []) {
+        const st = (panel.series_styles || []).find((x) => x.dataset_id === did && x.series_index === s.index);
+        if (st && !st.visible) continue;
+        if (seen === targetIdx) {
+          return { datasetId: did, seriesIndex: s.index, defaultName: s.name, existingStyle: st };
+        }
+        seen++;
+      }
+    }
+    return null;
+  }
+
+  function openInlineEditor(svgGroupEl) {
+    const gid = svgGroupEl.id || "";
+    const parts = gid.split("__"); // ["gmx_edit", field, panelIdx, ...]
+    const field = parts[1];
+    const panelIdx = parts.length >= 3 ? Number(parts[2]) : state.activePanelIdx;
+    const panel = state.spec.panels[panelIdx] || getActivePanel();
+    const letters = "abcdefghijklmnopqrstuvwxyz";
+    const pLetter = letters[panelIdx] || String(panelIdx + 1);
+
+    // Switch active panel immediately so sidebar stays in sync
+    if (field !== "suptitle" && Number.isFinite(panelIdx) && panelIdx < state.spec.panels.length) {
+      state.activePanelIdx = panelIdx;
+      syncAllControls();
+    }
+
+    const currentText = (svgGroupEl.textContent || "").trim();
+    let tagLabel = `Panel ${pLetter}`;
+    let initialVal = currentText;
+    let applyFn = null;
+
+    if (field === "title") {
+      tagLabel = `Panel ${pLetter} · Title`;
+      initialVal = panel.title || currentText;
+      applyFn = (val) => { panel.title = val; };
+    } else if (field === "xlabel") {
+      tagLabel = `Panel ${pLetter} · X-Axis Label`;
+      initialVal = panel.x_label ?? currentText;
+      applyFn = (val) => { panel.x_label = val.trim() === "" ? null : val; };
+    } else if (field === "ylabel") {
+      tagLabel = `Panel ${pLetter} · Y-Axis Label`;
+      initialVal = panel.y_label ?? currentText;
+      applyFn = (val) => { panel.y_label = val.trim() === "" ? null : val; };
+    } else if (field === "y2label") {
+      tagLabel = `Panel ${pLetter} · Right Y Label`;
+      initialVal = panel.y2_label ?? currentText;
+      applyFn = (val) => { panel.y2_label = val.trim() === "" ? null : val; };
+    } else if (field === "cbar") {
+      tagLabel = `Panel ${pLetter} · Colorbar Label`;
+      initialVal = panel.colorbar_label ?? currentText;
+      applyFn = (val) => { panel.colorbar_label = val.trim() === "" ? null : val; };
+    } else if (field === "agglabel") {
+      tagLabel = `Panel ${pLetter} · Aggregate Legend`;
+      initialVal = panel.aggregate_label || currentText;
+      applyFn = (val) => { panel.aggregate_label = val; };
+    } else if (field === "suptitle") {
+      tagLabel = "Figure Super-Title";
+      initialVal = state.spec.suptitle || currentText;
+      applyFn = (val) => { state.spec.suptitle = val; };
+    } else if (field === "legend") {
+      const legIdx = Number(parts[3] || 0);
+      const match = findNthVisibleSeries(panel, legIdx);
+      if (!match) return;
+      tagLabel = `Panel ${pLetter} · Legend #${legIdx + 1}`;
+      initialVal = (match.existingStyle && match.existingStyle.label) || match.defaultName || currentText;
+      applyFn = (val) => {
+        if (!panel.series_styles) panel.series_styles = [];
+        let st = match.existingStyle;
+        if (!st) {
+          st = {
+            dataset_id: match.datasetId,
+            series_index: match.seriesIndex,
+            label: val,
+            visible: true,
+            color: null,
+            linewidth: null,
+            linestyle: "-",
+            marker: "none",
+            markersize: 3.5,
+            alpha: 1.0,
+            fill_under: false,
+            y_axis: "left",
+          };
+          panel.series_styles.push(st);
+        } else {
+          st.label = val;
+        }
+      };
+    } else {
+      return;
+    }
+
+    const box = $("inline-editor");
+    const input = $("inline-editor-input");
+    const tag = $("inline-editor-tag");
+    if (!box || !input || !tag) return;
+
+    tag.textContent = tagLabel;
+    input.value = initialVal;
+
+    // Position cleanly near the clicked SVG label without going offscreen
+    const rect = svgGroupEl.getBoundingClientRect();
+    box.classList.remove("hidden");
+    const bw = box.offsetWidth || 280;
+    const bh = box.offsetHeight || 72;
+    const left = Math.max(12, Math.min(window.innerWidth - bw - 12, rect.left + rect.width / 2 - bw / 2));
+    const top = Math.max(12, Math.min(window.innerHeight - bh - 12, rect.bottom + 8));
+    box.style.left = `${Math.round(left)}px`;
+    box.style.top = `${Math.round(top)}px`;
+
+    activeInlineCommit = () => {
+      applyFn(input.value);
+      closeInlineEditor();
+      syncAllControls();
+      renderNow();
+      showToast(`Updated ${tagLabel}`);
+    };
+
+    input.focus();
+    input.select();
   }
 
   function renderFelMinimaTable(felPanels) {
@@ -1137,6 +1297,28 @@
       dz.classList.remove("drag-over");
       handleFiles(e.dataTransfer.files);
     });
+
+    // Floating Inline SVG Label Editor events
+    if ($("inline-editor")) {
+      $("inline-editor-save")?.addEventListener("click", () => activeInlineCommit && activeInlineCommit());
+      $("inline-editor-cancel")?.addEventListener("click", () => closeInlineEditor());
+      $("inline-editor-input")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (activeInlineCommit) activeInlineCommit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          closeInlineEditor();
+        }
+      });
+      document.addEventListener("mousedown", (e) => {
+        const box = $("inline-editor");
+        if (!box || box.classList.contains("hidden")) return;
+        if (!box.contains(e.target) && !(e.target.closest && e.target.closest('[id^="gmx_edit__"]'))) {
+          closeInlineEditor();
+        }
+      });
+    }
 
     // Academic License Modal
     const licModal = $("license-modal");

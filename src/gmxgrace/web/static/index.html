@@ -115,7 +115,7 @@
           <div class="canvas-meta">
             <span id="canvas-dims" class="meta-badge">Nature · 183 × 132 mm</span>
             <span id="render-indicator" class="render-badge">Ready</span>
-            <span id="hover-coords" class="coords-badge" title="Hover over any plot to read exact data coordinates; click to copy">Hover plot for (x, y)</span>
+            <span id="hover-coords" class="coords-badge" title="Click any title, axis, or legend on the figure to edit inline; click plot area to select panel &amp; copy coordinates">Click any label to edit · Hover for (x, y)</span>
           </div>
           <div class="canvas-tools">
             <button class="tool-btn active" data-zoom="fit">Fit</button>
@@ -647,6 +647,19 @@
         </div>
       </aside>
     </main>
+  </div>
+
+  <!-- Floating Inline Label Editor (Click-to-Edit on SVG Figure) -->
+  <div id="inline-editor" class="inline-editor hidden" role="dialog" aria-label="Edit figure label">
+    <div class="inline-editor-head">
+      <span id="inline-editor-tag" class="inline-editor-tag">Title</span>
+      <span class="inline-editor-hint">Enter to apply · Esc to cancel</span>
+    </div>
+    <div class="inline-editor-row">
+      <input type="text" id="inline-editor-input" autocomplete="off" />
+      <button class="btn btn-primary btn-sm" id="inline-editor-save">Apply</button>
+      <button class="btn btn-ghost btn-sm" id="inline-editor-cancel">×</button>
+    </div>
   </div>
 
   <!-- Academic License Modal -->

@@ -188,6 +188,7 @@ def _render_matrix_panel(
     panel: PanelSpec,
     ds: ParsedDataset,
     preset_axes_lw: float,
+    panel_idx: int = 0,
 ) -> None:
     assert ds.matrix is not None
     m = ds.matrix
@@ -285,6 +286,7 @@ def _render_matrix_panel(
         cbar.set_label(panel.colorbar_label or m.legend_label)
 
     cbar.outline.set_linewidth(preset_axes_lw)
+    cbar.ax.yaxis.label.set_gid(f"gmx_edit__cbar__{panel_idx}")
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(True)
 
@@ -292,10 +294,13 @@ def _render_matrix_panel(
     y_lbl = panel.y_label if panel.y_label is not None else update_label_unit(ds.y_label, ds.y_unit, panel.y_unit)
     ax.set_xlabel(x_lbl)
     ax.set_ylabel(y_lbl)
+    ax.xaxis.label.set_gid(f"gmx_edit__xlabel__{panel_idx}")
+    ax.yaxis.label.set_gid(f"gmx_edit__ylabel__{panel_idx}")
     if panel.title:
         ax.set_title(panel.title, pad=5)
     elif ds.title:
         ax.set_title(ds.title, pad=5)
+    ax.title.set_gid(f"gmx_edit__title__{panel_idx}")
 
     if panel.x_min is not None or panel.x_max is not None:
         ax.set_xlim(panel.x_min, panel.x_max)
@@ -361,6 +366,7 @@ def _render_fel2d(
     panel: PanelSpec,
     transformed_series: list[tuple[SeriesData, SeriesStyleSpec | None, str]],
     xy_items: list[tuple[SeriesData, SeriesStyleSpec | None, ParsedDataset]],
+    panel_idx: int = 0,
 ) -> tuple[str, str]:
     """Compute and plot a 2D Gibbs Free Energy Landscape from two .xvg collective-variable series."""
     if len(transformed_series) < 2:
@@ -436,6 +442,7 @@ def _render_fel2d(
     cbar = ax.figure.colorbar(cf, cax=cax)
     unit_disp = "kcal mol⁻¹" if panel.fel_unit == "kcal/mol" else "kJ mol⁻¹"
     cbar.set_label(panel.colorbar_label or f"ΔG ({unit_disp})")
+    cbar.ax.yaxis.label.set_gid(f"gmx_edit__cbar__{panel_idx}")
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(True)
 
@@ -721,6 +728,7 @@ def _render_xy_panel(
     palette: list[str],
     default_lw: float,
     max_plot_points: int = 12000,
+    panel_idx: int = 0,
 ) -> None:
     if not xy_items:
         ax.text(
@@ -775,7 +783,7 @@ def _render_xy_panel(
 
     # Special biophysics plot modes
     if panel.plot_type == "fel2d":
-        custom_x_lbl, custom_y_lbl = _render_fel2d(ax, panel, transformed_series, xy_items)
+        custom_x_lbl, custom_y_lbl = _render_fel2d(ax, panel, transformed_series, xy_items, panel_idx=panel_idx)
     elif panel.plot_type in {"violin", "box"}:
         _render_comparison(ax, panel, transformed_series, mode=panel.plot_type)
         custom_x_lbl = ""
@@ -998,6 +1006,7 @@ def _render_xy_panel(
             if not y2_lbl and first_right_ds is not None:
                 y2_lbl = update_label_unit(first_right_ds.y_label, first_right_ds.y_unit, panel.y2_unit)
             ax2.set_ylabel(y2_lbl or "Right Y", color=first_right_color or "#111827")
+            ax2.yaxis.label.set_gid(f"gmx_edit__y2label__{panel_idx}")
             if first_right_color:
                 ax2.tick_params(axis="y", colors=first_right_color)
                 ax2.spines["right"].set_edgecolor(first_right_color)
@@ -1032,9 +1041,12 @@ def _render_xy_panel(
     else:
         ax.set_xlabel(x_lbl)
         ax.set_ylabel(y_lbl)
+    ax.xaxis.label.set_gid(f"gmx_edit__xlabel__{panel_idx}")
+    ax.yaxis.label.set_gid(f"gmx_edit__ylabel__{panel_idx}")
 
     if panel.title and not panel.domain_tracks:
         ax.set_title(panel.title, pad=5)
+        ax.title.set_gid(f"gmx_edit__title__{panel_idx}")
 
     if panel.grid:
         ax.grid(True, which="major")
@@ -1073,6 +1085,13 @@ def _render_xy_panel(
         )
         if leg and leg.get_frame():
             leg.get_frame().set_linewidth(0.6)
+        if leg is not None:
+            is_agg = panel.aggregate != "none" and len(transformed_series) >= 2
+            for leg_i, txt in enumerate(leg.get_texts()):
+                if is_agg and leg_i == 0:
+                    txt.set_gid(f"gmx_edit__agglabel__{panel_idx}")
+                elif panel.plot_type != "delta":
+                    txt.set_gid(f"gmx_edit__legend__{panel_idx}__{leg_i}")
 
     # Optional magnified zoom inset
     if panel.zoom_inset is not None and panel.zoom_inset.enabled:
@@ -1082,7 +1101,9 @@ def _render_xy_panel(
     if panel.domain_tracks:
         _add_domain_tracks(ax, panel.domain_tracks)
         if panel.title:
-            ax.figure.axes[-1].set_title(panel.title, pad=4)
+            ax_top = ax.figure.axes[-1]
+            ax_top.set_title(panel.title, pad=4)
+            ax_top.title.set_gid(f"gmx_edit__title__{panel_idx}")
 
     # Marginal distribution histogram / KDE on the right side (MD publication standard)
     if panel.marginal_hist and all_y_for_marginal and ax2 is None and panel.plot_type not in {"hist", "violin", "box", "fel2d", "density2d"}:
@@ -1161,9 +1182,17 @@ def render_to_figure(spec: FigureSpec, datasets: dict[str, ParsedDataset]) -> Fi
             xy_items, matrix_ds = _resolve_panel_series(panel, datasets)
 
             if matrix_ds is not None and panel.plot_type in {"auto", "matrix", "contour"}:
-                _render_matrix_panel(ax, panel, matrix_ds, preset.axes_linewidth)
+                _render_matrix_panel(ax, panel, matrix_ds, preset.axes_linewidth, panel_idx=idx)
             else:
-                _render_xy_panel(ax, panel, xy_items, palette, default_lw, max_plot_points=spec.max_plot_points)
+                _render_xy_panel(
+                    ax,
+                    panel,
+                    xy_items,
+                    palette,
+                    default_lw,
+                    max_plot_points=spec.max_plot_points,
+                    panel_idx=idx,
+                )
 
             # Panel labels (a, b, c, ...)
             if multi_panel and spec.panel_labels != "none":
@@ -1181,7 +1210,8 @@ def render_to_figure(spec: FigureSpec, datasets: dict[str, ParsedDataset]) -> Fi
                     )
 
         if spec.suptitle:
-            fig.suptitle(spec.suptitle, fontsize=rc["axes.titlesize"] * 1.1, fontweight="bold")
+            st_text = fig.suptitle(spec.suptitle, fontsize=rc["axes.titlesize"] * 1.1, fontweight="bold")
+            st_text.set_gid("gmx_edit__suptitle")
 
         return fig
 

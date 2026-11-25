@@ -355,6 +355,12 @@ def test_v02_biophysics_modes_and_cli_fel_batch(tmp_path: Path) -> None:
     twin_svg = render_figure_bytes(twin_spec, {"rmsd": ds_rmsd, "rg": ds_rg}, fmt="svg")
     assert b"<svg" in twin_svg and b"gmxgrace-axes-meta" in twin_svg
 
+    # Verify direct click-to-edit SVG label GIDs are embedded cleanly
+    assert b"gmx_edit__xlabel__0" in twin_svg
+    assert b"gmx_edit__ylabel__0" in twin_svg
+    assert b"gmx_edit__y2label__0" in twin_svg
+    assert b"gmx_edit__legend__0__0" in twin_svg
+
     # 6. CLI `gmxgrace fel` & `gmxgrace batch`
     demo_dir = tmp_path / "demo_in"
     assert cli_main(["demo", "--out-dir", str(demo_dir)]) == 0
