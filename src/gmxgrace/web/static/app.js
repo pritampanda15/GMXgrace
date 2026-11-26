@@ -622,6 +622,7 @@
     $("ctrl-font-size").value = state.spec.font_size ?? "";
     $("ctrl-line-width").value = state.spec.line_width ?? "";
     $("ctrl-transparent").checked = Boolean(state.spec.transparent);
+    $("paper-sheet")?.classList.toggle("transparent-bg", Boolean(state.spec.transparent));
     $("ctrl-suptitle").value = state.spec.suptitle || "";
     if ($("ctrl-max-pts")) {
       $("ctrl-max-pts").value = String(state.spec.max_plot_points ?? 12000);
@@ -1527,6 +1528,7 @@
     });
     $("ctrl-transparent").addEventListener("change", (e) => {
       state.spec.transparent = e.target.checked;
+      $("paper-sheet")?.classList.toggle("transparent-bg", e.target.checked);
       scheduleRender();
     });
     $("ctrl-suptitle").addEventListener("input", (e) => {

@@ -40,6 +40,8 @@ def generate_cli_command(
             parts.extend(["--line-width", str(spec.line_width)])
         if spec.dpi != 300:
             parts.extend(["--dpi", str(spec.dpi)])
+        if spec.transparent:
+            parts.append("--transparent")
 
         if p.title:
             parts.extend(["--title", _quote(p.title)])
